@@ -1,0 +1,6 @@
+usage.db
+test_*.db
+__pycache__/
+*.pyc
+.DS_Store
+config.conf

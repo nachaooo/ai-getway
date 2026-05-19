@@ -1,0 +1,4 @@
+flask>=3.0
+requests>=2.31
+tiktoken>=0.5
+transformers>=4.36

@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Gateway</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; background: #0f0f0f; color: #ccc; padding: 20px; }
+.container { max-width: 720px; margin: 0 auto; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+h1 { font-size: 15px; color: #fff; font-weight: 600; }
+a { color: #555; font-size: 12px; text-decoration: none; }
+.controls { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
+.controls button { background: #1a1a1a; border: 1px solid #2a2a2a; color: #888; padding: 6px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
+.controls button.active { background: #2563eb; border-color: #3b82f6; color: #fff; }
+.stats { display: flex; gap: 12px; margin-bottom: 20px; }
+.stat { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 14px 18px; flex: 1; }
+.stat .n { font-size: 24px; font-weight: 700; color: #fff; }
+.stat .l { font-size: 11px; color: #555; margin-top: 2px; }
+.section { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+.section h2 { font-size: 12px; color: #555; font-weight: 500; margin-bottom: 10px; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+td, th { padding: 7px 8px; border-bottom: 1px solid #1a1a1a; text-align: left; color: #888; }
+th { color: #555; font-weight: 500; }
+td:last-child, th:last-child { text-align: right; }
+.empty { color: #444; text-align: center; padding: 24px; font-size: 13px; }
+.pages { display: flex; gap: 4px; justify-content: center; margin-top: 10px; }
+.pages button { background: #1a1a1a; border: 1px solid #2a2a2a; color: #888; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+.pages button.active { background: #2563eb; border-color: #3b82f6; color: #fff; }
+.section .chart-wrap { height: 160px; position: relative; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>AI Gateway 用量</h1>
+  </div>
+
+  <div class="controls">
+    <button data-range="1h">1小时</button>
+    <button data-range="24h" class="active">24小时</button>
+    <button data-range="7d">7天</button>
+    <button data-range="30d">30天</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="n" id="totalRequests">-</div><div class="l">对话次数</div></div>
+    <div class="stat"><div class="n" id="promptTokens">-</div><div class="l">输入 Token</div></div>
+    <div class="stat"><div class="n" id="completionTokens">-</div><div class="l">输出 Token</div></div>
+  </div>
+
+  <div class="section">
+    <h2>用量趋势</h2>
+    <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+  </div>
+
+  <div class="section">
+    <h2>各平台本月用量</h2>
+    <div id="billingList"></div>
+  </div>
+
+    <div class="section">
+    <h2>最近请求</h2>
+    <table>
+      <thead><tr><th>时间</th><th>模型</th><th>平台</th><th>输入</th><th>输出</th></tr></thead>
+      <tbody id="recentTable"></tbody>
+    </table>
+    <div class="pages" id="pages"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+const PAGE_SIZE = 500;
+let page = 1, allRecent = [];
+
+function p(n) { return String(n).padStart(2, '0'); }
+function localISO(d) { return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
+function n(v) { return v === 0 ? '0' : (v || '-').toLocaleString(); }
+
+function renderRecent() {
+  const tb = document.getElementById('recentTable');
+  if (allRecent.length === 0) {
+    tb.innerHTML = '<tr><td colspan="5" class="empty">暂无数据</td></tr>';
+    document.getElementById('pages').innerHTML = '';
+    return;
+  }
+  const totalPages = Math.ceil(allRecent.length / PAGE_SIZE);
+  if (page > totalPages) page = totalPages;
+  const start = (page - 1) * PAGE_SIZE;
+  const items = allRecent.slice(start, start + PAGE_SIZE);
+  tb.innerHTML = items.map(r =>
+    `<tr><td style="color:#555">${r.request_time.slice(5,19)}</td><td style="color:#ccc">${r.model}</td><td>${r.provider}</td><td>${n(r.prompt_tokens)}</td><td>${n(r.completion_tokens)}</td></tr>`
+  ).join('');
+
+  let ph = '';
+  for (let i = 1; i <= totalPages; i++) {
+    ph += `<button class="${i === page ? 'active' : ''}" onclick="page=${i};renderRecent()">${i}</button>`;
+  }
+  document.getElementById('pages').innerHTML = ph;
+}
+
+function renderChart(timeline) {
+  const labels = timeline.map(t => t.period.slice(5) + ':00');
+  const tokens = timeline.map(t => t.total_tokens);
+  const counts = timeline.map(t => t.request_count);
+  const ctx = document.getElementById('trendChart').getContext('2d');
+  if (window._chart) window._chart.destroy();
+  window._chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Token', data: tokens, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,.08)', fill: true, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 20, tension: .2, yAxisID: 'y' },
+        { label: '请求数', data: counts, borderColor: '#6b7280', backgroundColor: 'rgba(107,114,128,.06)', fill: true, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 20, tension: .2, yAxisID: 'y1' },
+      ]
+    },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { labels: { color: '#888', boxWidth: 10, padding: 8, font: { size: 10 } } },
+          tooltip: {
+            backgroundColor: '#1a1a1a', titleColor: '#ccc', bodyColor: '#888',
+            borderColor: '#2a2a2a', borderWidth: 1, cornerRadius: 6,
+            padding: 10, titleFont: { size: 11 }, bodyFont: { size: 11 },
+            callbacks: {
+              label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`
+            }
+          }
+        },
+        scales: {
+        x: { ticks: { color: '#555', font: { size: 9 }, maxTicksLimit: 12 }, grid: { color: '#1a1a1a' } },
+        y: { ticks: { color: '#555', font: { size: 9 } }, grid: { color: '#1a1a1a' }, beginAtZero: true },
+        y1: { position: 'right', ticks: { color: '#555', font: { size: 9 } }, grid: { display: false }, beginAtZero: true },
+      }
+    }
+  });
+}
+
+function fetchAll() {
+  const now = new Date();
+  const btn = document.querySelector('[data-range].active');
+  const hours = ({ '1h':1, '24h':24, '7d':168, '30d':720 })[btn?.dataset?.range] || 24;
+  const s = localISO(new Date(now - hours * 3600000));
+  const e = localISO(now);
+
+  fetch('/api/usage?' + new URLSearchParams({ start: s, end: e }))
+    .then(r => r.json()).then(d => {
+      document.getElementById('totalRequests').textContent = n(d.totals.request_count);
+      document.getElementById('promptTokens').textContent = n(d.totals.prompt_tokens);
+      document.getElementById('completionTokens').textContent = n(d.totals.completion_tokens);
+      renderChart(d.timeline);
+      allRecent = d.recent;
+      renderRecent();
+    });
+
+  const ms = localISO(new Date(now.getFullYear(), now.getMonth(), 1));
+  fetch('/api/usage?' + new URLSearchParams({ start: ms, end: e }))
+    .then(r => r.json()).then(d => {
+      const bl = document.getElementById('billingList');
+      const billing = d.billing || {};
+      const entries = Object.keys(billing);
+      if (entries.length === 0) {
+        bl.innerHTML = '<div class="empty">暂无数据</div>';
+        return;
+      }
+      let html = '';
+      for (const [prov, b] of Object.entries(billing)) {
+        const pct = b.monthly_quota > 0 ? (b.month_used / b.monthly_quota * 100).toFixed(1) : null;
+        html += `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1a1a1a;font-size:12px">
+          <span style="color:#ccc">${prov}</span>
+          <span style="color:#888">${n(b.month_used)} 次${b.price_per_request ? ' / ¥' + b.estimated_cost : ''}${pct !== null ? ' / ' + pct + '%' : ''}</span>
+        </div>`;
+      }
+      bl.innerHTML = html;
+    });
+}
+
+document.querySelectorAll('[data-range]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-range]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    page = 1;
+    fetchAll();
+  });
+});
+
+fetchAll();
+setInterval(fetchAll, 15000);
+</script>
+</body>
+</html>
