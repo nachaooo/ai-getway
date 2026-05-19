@@ -1,8 +1,135 @@
 # AI Gateway
 
-零配置 AI API 网关，转发 opencode 所有模型调用并统计 Token 用量，提供 Web 仪表盘。
+> Zero-config API proxy with token usage dashboard.  
+> Works with any OpenAI-compatible client (opencode, Cursor, Continue, Aider, etc.)
 
-## 快速开始
+[中文说明](#chinese)
+
+---
+
+## Features
+
+- **Zero-config passthrough** — Set `?by=<upstream_url>` dynamically, no route pre-configuration needed
+- **Token counting** — DeepSeek uses local LlamaTokenizer; others fallback to `tiktoken` / char estimation
+- **Thinking tokens** — `reasoning_content` counted as output tokens (DeepSeek R1, Kimi K2, etc.)
+- **Kimi precise estimation** — Calls official `tokenizers/estimate-token-count` API for accurate prompt tokens
+- **SSE compatible** — Supports both `data:` and `data: ` prefix formats
+- **Stream buffering** — Parses SSE events by `\n\n` delimiter, prevents JSON truncation
+- **Empty message filter** — Auto-filters empty assistant messages (required by Kimi)
+- **Dashboard** — Dark-themed stats + timeline chart + billing + recent requests (500 rows)
+- **Tray launcher** — Windows system tray icon with right-click menu (start.vbs)
+
+## Quick Start
+
+```bash
+pip install -r requirements.txt
+python app.py
+```
+
+Open `http://localhost:5000` for the dashboard.
+
+## How it Works
+
+Point your client's baseURL to the gateway:
+
+```json
+{
+  "baseURL": "http://localhost:5000/v1?by=https://api.deepseek.com",
+  "apiKey": "sk-xxx"
+}
+```
+
+The gateway:
+1. Extracts the upstream URL from `?by=` parameter
+2. Forwards the request body, `Authorization`, and `User-Agent` headers
+3. Supports both streaming and non-streaming responses
+4. Logs prompt/completion tokens to SQLite after each request
+
+## Add a Provider
+
+No gateway code changes needed. Just add an entry to your client config:
+
+```json
+{
+  "my-provider": {
+    "baseURL": "http://localhost:5000/v1?by=https://api.example.com/v1",
+    "apiKey": "sk-xxx"
+  }
+}
+```
+
+## Dashboard
+
+`http://localhost:5000` provides:
+
+| Widget | Description |
+|--------|-------------|
+| Stats cards | Total conversations, input tokens, output tokens |
+| Trend chart | Dual-axis line chart (tokens + request count over time) |
+| Monthly billing | Per-provider request count with time-range selector |
+| Recent requests | Last 500 requests with auto-refresh every 15s |
+
+## Launch Methods
+
+**Terminal (all platforms):**
+```bash
+python app.py
+```
+
+**System tray (Windows):**
+Double-click `start.vbs` — installs dependencies automatically, runs in background with tray icon.
+
+## Project Structure
+
+```
+ai-gateway/
+├── app.py               # Core: proxy, DB, API endpoints
+├── tray.py              # System tray launcher
+├── start.vbs            # VBS launcher (auto-dep-install)
+├── icon.png             # Tray icon
+├── requirements.txt
+├── Dockerfile
+├── templates/
+│   └── index.html       # Web dashboard
+├── tokenizers/
+│   └── deepseek/        # DeepSeek LlamaTokenizer
+└── usage.db             # SQLite (auto-created)
+```
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `5000` | Listening port |
+| `DB_PATH` | `./usage.db` | SQLite database path |
+| `KIMI_ESTIMATE_URL` | `https://api.moonshot.cn/v1/tokenizers/estimate-token-count` | Kimi token estimation API |
+
+## Docker
+
+```bash
+docker build -t ai-gateway .
+docker run -d -p 5000:5000 --name ai-gateway ai-gateway
+```
+
+## Comparison
+
+| Feature | AI Gateway | Other proxies |
+|---------|-----------|---------------|
+| Dynamic upstream | ✅ `?by=` | ❌ Static routes |
+| Token counting | ✅ Built-in | ❌ Not included |
+| Thinking tokens | ✅ `reasoning_content` | ❌ Counted as 0 |
+| SSE edge cases | ✅ `data:` / `data: ` | ❌ May crash |
+| Kimi precise count | ✅ Official API | ❌ Character estimate |
+| Dashboard | ✅ Dark theme + chart | ❌ CLI only |
+| Setup | ✅ One baseURL change | ❌ Complex config |
+
+---
+
+## <span id="chinese">中文说明</span>
+
+**AI Gateway** 是一个零配置的 AI API 网关，转发任意兼容 OpenAI 格式的模型请求，自动统计 Token 用量，并提供 Web 仪表盘。
+
+### 快速开始
 
 ```bash
 pip install -r requirements.txt
@@ -11,95 +138,28 @@ python app.py
 
 访问 `http://localhost:5000` 查看仪表盘。
 
-首次启动时自动从 `import_routes.json` 导入预配置路由。
+### 工作原理
 
-## 工作原理
+将所有 provider 的 `baseURL` 指向网关，通过 `?by=` 参数动态指定上游地址，无需在网关中预配任何路由。
 
-所有 provider 的 `baseURL` 指向网关：
+**支持所有 OpenAI 兼容的客户端**：opencode、Cursor、Continue、Aider 等。
 
-```json
-"baseURL": "http://localhost:5000/v1?by=<上游API地址>"
-```
+### 启动方式
 
-- 网关收到请求，将 `?by=` 参数中的上游 URL 作为目标
-- 透传 HTTP 方法、请求体、`Authorization` 和 `User-Agent` 头
-- 流式与非流式响应均支持
-- 每次请求后记录 prompt / completion token 数到 SQLite
+- **命令行**：`python app.py`
+- **Windows 托盘**：双击 `start.vbs`
+- **Docker**：`docker run -d -p 5000:5000 ai-gateway`
 
-## 添加新 Provider
+### 特性
 
-只需在 `opencode.json` 中新增一条即可，无需修改网关代码：
+- 🚀 零配置，一行 baseURL 搞定
+- 📊 用量仪表盘（趋势图 + 统计数据）
+- 🧮 精确 Token 计数（含 reasoning_content）
+- 🔌 兼容任何 OpenAI 兼容客户端
+- 🪟 Windows 托盘后台运行
 
-```json
-"my-provider": {
-  "npm": "@ai-sdk/openai-compatible",
-  "name": "my-provider",
-  "options": {
-    "baseURL": "http://localhost:5000/v1?by=https://api.example.com/v1",
-    "apiKey": "sk-xxx"
-  }
-}
-```
+---
 
-## 仪表盘
+## License
 
-`http://localhost:5000` 提供：
-
-- **统计卡片**：对话次数、输入 Token、输出 Token
-- **本月用量**：按平台统计请求次数与预估费用
-- **最近请求**：最近 500 条请求明细，每 15 秒自动刷新
-- **时间范围**：1 小时 / 24 小时 / 7 天 / 30 天 切换
-
-## 特性
-
-| 特性 | 说明 |
-|------|------|
-| 无状态转发 | 不需预配路由，`?by=` 动态指定上游 |
-| Token 计数 | DeepSeek 用本地 LlamaTokenizer，其它用 `tiktoken` |
-| 思考 Token | `reasoning_content` 正确计入输出 Token |
-| Kimi 精确估算 | 调用官方 `tokenizers/estimate-token-count` API 获取精确 prompt 值 |
-| SSE 兼容 | 支持 `data:` 和 `data: ` 两种前缀格式 |
-| 流式缓冲 | 以 `\n\n` 分割 SSE 事件，防 JSON 截断 |
-| 用量趋势图 | 双轴折线图展示 Token / 请求数时间序列 |
-| 空消息过滤 | 自动过滤空 `assistant` 消息（Kimi 兼容） |
-| User-Agent 透传 | 保留 SDK 原始 UA（Kimi 白名单需要） |
-
-## 路由管理
-
-API 接口 `/api/routes`：
-
-```bash
-# 查看所有路由
-curl http://localhost:5000/api/routes
-
-# 添加路由
-curl -X POST http://localhost:5000/api/routes \
-  -H "Content-Type: application/json" \
-  -d '{"route_name":"my-route","upstream_base_url":"https://...","upstream_api_key":"sk-xxx"}'
-
-# 删除路由
-curl -X DELETE http://localhost:5000/api/routes \
-  -H "Content-Type: application/json" \
-  -d '{"route_name":"my-route"}'
-```
-
-## 项目结构
-
-```
-ai-gateway/
-├── app.py               # 主程序（代理 + DB + API）
-├── import_routes.json   # 首次启动导入的路由表
-├── requirements.txt
-├── templates/
-│   └── index.html       # Web 仪表盘
-├── tokenizers/
-│   └── deepseek/        # DeepSeek V3 LlamaTokenizer
-└── usage.db             # SQLite 用量记录（自动创建）
-```
-
-## 环境变量
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `PORT` | `5000` | 监听端口 |
-| `DB_PATH` | `./usage.db` | SQLite 数据库路径 |
+MIT
