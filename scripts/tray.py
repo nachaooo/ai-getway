@@ -2,13 +2,13 @@ import subprocess, os, sys, threading, webbrowser, time, signal
 import pystray
 from PIL import Image
 
-BASE = os.path.dirname(os.path.abspath(__file__))
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 app_proc = None
 
 def start_gateway():
     global app_proc
     app_proc = subprocess.Popen(
-        [sys.executable, "app.py"],
+        [sys.executable, os.path.join(BASE, "app.py")],
         cwd=BASE,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         creationflags=subprocess.CREATE_NO_WINDOW,
@@ -30,7 +30,7 @@ def quit_app(icon, item):
     os._exit(0)
 
 def create_icon():
-    return Image.open(os.path.join(BASE, "icon.png"))
+    return Image.open(os.path.join(BASE, "static", "icon.png"))
 
 def main():
     start_gateway()

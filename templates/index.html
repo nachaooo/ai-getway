@@ -73,24 +73,22 @@ td:last-child, th:last-child { text-align: right; }
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script>
 const PAGE_SIZE = 100;
-let page = 1, allRecent = [];
+let page = 1, totalRecent = 0;
 
 function p(n) { return String(n).padStart(2, '0'); }
 function localISO(d) { return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
 function n(v) { return v === 0 ? '0' : (v || '-').toLocaleString(); }
 
-function renderRecent() {
+function renderRecent(items) {
   const tb = document.getElementById('recentTable');
-  if (allRecent.length === 0) {
+  if (items.length === 0) {
     tb.innerHTML = '<tr><td colspan="5" class="empty">暂无数据</td></tr>';
     document.getElementById('pages').innerHTML = '';
     return;
   }
-  const totalPages = Math.ceil(allRecent.length / PAGE_SIZE);
+  const totalPages = Math.ceil(totalRecent / PAGE_SIZE);
   if (page > totalPages) page = totalPages;
   if (page < 1) page = 1;
-  const start = (page - 1) * PAGE_SIZE;
-  const items = allRecent.slice(start, start + PAGE_SIZE);
   tb.innerHTML = items.map(r =>
     `<tr><td style="color:#555">${r.request_time.slice(5,19)}</td><td style="color:#ccc">${r.model}</td><td>${r.provider}</td><td>${n(r.prompt_tokens)}</td><td>${n(r.completion_tokens)}</td></tr>`
   ).join('');
@@ -100,7 +98,7 @@ function renderRecent() {
     if (disabled) {
       ph += `<button disabled style="opacity:.4;cursor:default">${label}</button>`;
     } else {
-      ph += `<button class="${isActive ? 'active' : ''}" onclick="page=${p};renderRecent()">${label}</button>`;
+      ph += `<button class="${isActive ? 'active' : ''}" onclick="fetchRecent(${p})">${label}</button>`;
     }
   };
   const addEllipsis = () => { ph += `<button disabled style="opacity:.4;cursor:default;border-color:transparent;background:transparent">...</button>`; };
@@ -177,8 +175,6 @@ function fetchAll() {
       document.getElementById('promptTokens').textContent = n(d.totals.prompt_tokens);
       document.getElementById('completionTokens').textContent = n(d.totals.completion_tokens);
       renderChart(d.timeline);
-      allRecent = d.recent;
-      renderRecent();
     });
 
   const ms = localISO(new Date(now.getFullYear(), now.getMonth(), 1));
@@ -192,19 +188,26 @@ function fetchAll() {
         return;
       }
       entries.sort((a, b) => b[1].month_used - a[1].month_used);
-      let html = '<table><thead><tr><th>平台</th><th style="text-align:right">调用次数</th><th style="text-align:right">输入 Token</th><th style="text-align:right">输出 Token</th><th style="text-align:right">费用 / 配额</th></tr></thead><tbody>';
+      let html = '<table><thead><tr><th>平台</th><th style="text-align:right">调用次数</th><th style="text-align:right">输入 Token</th><th style="text-align:right">输出 Token</th></tr></thead><tbody>';
       for (const [prov, b] of entries) {
-        const pct = b.monthly_quota > 0 ? (b.month_used / b.monthly_quota * 100).toFixed(1) : null;
         html += `<tr>
           <td style="color:#ccc">${prov}</td>
           <td style="text-align:right">${n(b.month_used)}</td>
           <td style="text-align:right">${n(b.prompt_tokens)}</td>
           <td style="text-align:right">${n(b.completion_tokens)}</td>
-          <td style="text-align:right;color:#888">${b.price_per_request ? '¥' + b.estimated_cost : '-'}${pct !== null ? ' / ' + pct + '%' : ''}</td>
         </tr>`;
       }
       html += '</tbody></table>';
       bl.innerHTML = html;
+    });
+}
+
+function fetchRecent(p) {
+  page = p;
+  fetch('/api/recent?' + new URLSearchParams({ page: page, page_size: PAGE_SIZE }))
+    .then(r => r.json()).then(d => {
+      totalRecent = d.total;
+      renderRecent(d.items);
     });
 }
 
@@ -214,11 +217,13 @@ document.querySelectorAll('[data-range]').forEach(btn => {
     btn.classList.add('active');
     page = 1;
     fetchAll();
+    fetchRecent(1);
   });
 });
 
 fetchAll();
-setInterval(fetchAll, 15000);
+fetchRecent(1);
+setInterval(() => { fetchAll(); fetchRecent(page); }, 15000);
 </script>
 </body>
 </html>

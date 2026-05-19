@@ -84,16 +84,20 @@ Double-click `start.vbs` — installs dependencies automatically, runs in backgr
 ```
 ai-gateway/
 ├── app.py               # Core: proxy, DB, API endpoints
-├── tray.py              # System tray launcher
 ├── start.vbs            # VBS launcher (auto-dep-install)
-├── icon.png             # Tray icon
 ├── requirements.txt
 ├── Dockerfile
+├── README.md
+├── CHANGELOG.md
+├── usage.db             # SQLite (auto-created)
 ├── templates/
 │   └── index.html       # Web dashboard
-├── tokenizers/
-│   └── deepseek/        # DeepSeek LlamaTokenizer
-└── usage.db             # SQLite (auto-created)
+├── static/
+│   └── icon.png         # Tray icon
+├── scripts/
+│   └── tray.py          # System tray launcher
+└── tokenizers/
+    └── deepseek/        # DeepSeek LlamaTokenizer
 ```
 
 ## Environment Variables

@@ -536,9 +536,34 @@ def api_usage():
         "totals": totals,
         "by_model": by_model,
         "timeline": timeline,
-        "recent": [dict(r) for r in recent],
         "period": {"start": start, "end": end},
         "billing": billing_by_provider,
+    })
+
+
+@app.route("/api/recent")
+def api_recent():
+    page = request.args.get("page", 1, type=int)
+    page_size = request.args.get("page_size", 100, type=int)
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 100
+    offset = (page - 1) * page_size
+
+    conn = get_db()
+    total = conn.execute("SELECT COUNT(*) as n FROM usage_logs").fetchone()["n"]
+    rows = conn.execute(
+        "SELECT * FROM usage_logs ORDER BY request_time DESC LIMIT ? OFFSET ?",
+        (page_size, offset),
+    ).fetchall()
+    conn.close()
+
+    return jsonify({
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": [dict(r) for r in rows],
     })
 
 

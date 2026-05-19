@@ -7,7 +7,7 @@ WshShell.CurrentDirectory = scriptDir
 CheckResult = WshShell.Run("cmd /c ""python -c ""import pystray; import PIL"" 2>nul""", 0, True)
 
 If CheckResult = 0 Then
-    WshShell.Run "cmd /c python tray.py", 0, False
+    WshShell.Run "cmd /c python scripts\tray.py", 0, False
 Else
-    WshShell.Run "cmd /c ""pip install -q pystray Pillow && python tray.py""", 0, False
+    WshShell.Run "cmd /c ""pip install -q pystray Pillow && python scripts\tray.py""", 0, False
 End If
