@@ -124,10 +124,28 @@ function renderRecent(items) {
   document.getElementById('pages').innerHTML = ph;
 }
 
-function renderChart(timeline) {
-  const labels = timeline.map(t => t.period.slice(5) + ':00');
-  const tokens = timeline.map(t => t.total_tokens);
-  const counts = timeline.map(t => t.request_count);
+function renderChart(timeline, groupBy) {
+  const merged = {};
+  for (const t of timeline) {
+    if (!merged[t.period]) {
+      merged[t.period] = { total_tokens: 0, request_count: 0 };
+    }
+    merged[t.period].total_tokens += t.total_tokens;
+    merged[t.period].request_count += t.request_count;
+  }
+  const periods = Object.keys(merged).sort();
+
+  let labelFn;
+  if (groupBy === 'minute') {
+    labelFn = p => p.slice(11, 16);
+  } else if (groupBy === 'day') {
+    labelFn = p => p.slice(5, 10);
+  } else {
+    labelFn = p => p.slice(5, 16);
+  }
+  const labels = periods.map(labelFn);
+  const tokens = periods.map(p => merged[p].total_tokens);
+  const counts = periods.map(p => merged[p].request_count);
   const ctx = document.getElementById('trendChart').getContext('2d');
   if (window._chart) window._chart.destroy();
   window._chart = new Chart(ctx, {
@@ -165,16 +183,18 @@ function renderChart(timeline) {
 function fetchAll() {
   const now = new Date();
   const btn = document.querySelector('[data-range].active');
-  const hours = ({ '1h':1, '24h':24, '7d':168, '30d':720 })[btn?.dataset?.range] || 24;
+  const range = btn?.dataset?.range || '24h';
+  const hours = ({ '1h':1, '24h':24, '7d':168, '30d':720 })[range] || 24;
+  const groupBy = ({ '1h':'minute', '24h':'hour', '7d':'day', '30d':'day' })[range] || 'hour';
   const s = localISO(new Date(now - hours * 3600000));
   const e = localISO(now);
 
-  fetch('/api/usage?' + new URLSearchParams({ start: s, end: e }))
+  fetch('/api/usage?' + new URLSearchParams({ start: s, end: e, group_by: groupBy }))
     .then(r => r.json()).then(d => {
       document.getElementById('totalRequests').textContent = n(d.totals.request_count);
       document.getElementById('promptTokens').textContent = n(d.totals.prompt_tokens);
       document.getElementById('completionTokens').textContent = n(d.totals.completion_tokens);
-      renderChart(d.timeline);
+      renderChart(d.timeline, groupBy);
     });
 
   const ms = localISO(new Date(now.getFullYear(), now.getMonth(), 1));

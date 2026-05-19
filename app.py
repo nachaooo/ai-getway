@@ -454,7 +454,9 @@ def api_usage():
     end = request.args.get("end", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     group_by = request.args.get("group_by", "hour")
 
-    if group_by == "hour":
+    if group_by == "minute":
+        sql_format = "strftime('%Y-%m-%d %H:%M', request_time)"
+    elif group_by == "hour":
         sql_format = "strftime('%Y-%m-%d %H:00', request_time)"
     elif group_by == "day":
         sql_format = "date(request_time)"
