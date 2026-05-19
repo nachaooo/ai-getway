@@ -72,7 +72,7 @@ td:last-child, th:last-child { text-align: right; }
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script>
-const PAGE_SIZE = 500;
+const PAGE_SIZE = 100;
 let page = 1, allRecent = [];
 
 function p(n) { return String(n).padStart(2, '0'); }
@@ -88,6 +88,7 @@ function renderRecent() {
   }
   const totalPages = Math.ceil(allRecent.length / PAGE_SIZE);
   if (page > totalPages) page = totalPages;
+  if (page < 1) page = 1;
   const start = (page - 1) * PAGE_SIZE;
   const items = allRecent.slice(start, start + PAGE_SIZE);
   tb.innerHTML = items.map(r =>
@@ -95,9 +96,33 @@ function renderRecent() {
   ).join('');
 
   let ph = '';
-  for (let i = 1; i <= totalPages; i++) {
-    ph += `<button class="${i === page ? 'active' : ''}" onclick="page=${i};renderRecent()">${i}</button>`;
+  const addBtn = (p, label, isActive = false, disabled = false) => {
+    if (disabled) {
+      ph += `<button disabled style="opacity:.4;cursor:default">${label}</button>`;
+    } else {
+      ph += `<button class="${isActive ? 'active' : ''}" onclick="page=${p};renderRecent()">${label}</button>`;
+    }
+  };
+  const addEllipsis = () => { ph += `<button disabled style="opacity:.4;cursor:default;border-color:transparent;background:transparent">...</button>`; };
+
+  addBtn(page - 1, '上一页', false, page <= 1);
+
+  const maxVisible = 5;
+  if (totalPages <= maxVisible + 2) {
+    for (let i = 1; i <= totalPages; i++) addBtn(i, i, i === page);
+  } else {
+    addBtn(1, 1, 1 === page);
+    let start = Math.max(2, page - 1);
+    let end = Math.min(totalPages - 1, page + 1);
+    if (page <= 3) { start = 2; end = maxVisible; }
+    if (page >= totalPages - 2) { start = totalPages - maxVisible + 1; end = totalPages - 1; }
+    if (start > 2) addEllipsis();
+    for (let i = start; i <= end; i++) addBtn(i, i, i === page);
+    if (end < totalPages - 1) addEllipsis();
+    addBtn(totalPages, totalPages, totalPages === page);
   }
+
+  addBtn(page + 1, '下一页', false, page >= totalPages);
   document.getElementById('pages').innerHTML = ph;
 }
 

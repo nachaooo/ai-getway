@@ -507,7 +507,7 @@ def api_usage():
             "request_count": r["request_count"],
         })
 
-    recent = conn.execute("SELECT * FROM usage_logs ORDER BY request_time DESC LIMIT 50").fetchall()
+    recent = conn.execute("SELECT * FROM usage_logs ORDER BY request_time DESC LIMIT 100").fetchall()
     routes_rows = conn.execute("SELECT * FROM routes").fetchall()
     route_map = {r["provider_label"]: dict(r) for r in routes_rows}
 
