@@ -56,7 +56,7 @@ td:last-child, th:last-child { text-align: right; }
   </div>
 
   <div class="section">
-    <h2>各平台本月用量</h2>
+    <h2>各平台使用量</h2>
     <div id="billingList"></div>
   </div>
 
@@ -74,6 +74,7 @@ td:last-child, th:last-child { text-align: right; }
 <script>
 const PAGE_SIZE = 100;
 let page = 1, totalRecent = 0;
+let currentStart = null, currentEnd = null;
 
 function p(n) { return String(n).padStart(2, '0'); }
 function localISO(d) { return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
@@ -188,6 +189,8 @@ function fetchAll() {
   const groupBy = ({ '1h':'minute', '24h':'hour', '7d':'day', '30d':'day' })[range] || 'hour';
   const s = localISO(new Date(now - hours * 3600000));
   const e = localISO(now);
+  currentStart = s;
+  currentEnd = e;
 
   fetch('/api/usage?' + new URLSearchParams({ start: s, end: e, group_by: groupBy }))
     .then(r => r.json()).then(d => {
@@ -197,8 +200,7 @@ function fetchAll() {
       renderChart(d.timeline, groupBy);
     });
 
-  const ms = localISO(new Date(now.getFullYear(), now.getMonth(), 1));
-  fetch('/api/usage?' + new URLSearchParams({ start: ms, end: e }))
+  fetch('/api/usage?' + new URLSearchParams({ start: s, end: e }))
     .then(r => r.json()).then(d => {
       const bl = document.getElementById('billingList');
       const billing = d.billing || {};
@@ -224,7 +226,12 @@ function fetchAll() {
 
 function fetchRecent(p) {
   page = p;
-  fetch('/api/recent?' + new URLSearchParams({ page: page, page_size: PAGE_SIZE }))
+  const params = { page: page, page_size: PAGE_SIZE };
+  if (currentStart && currentEnd) {
+    params.start = currentStart;
+    params.end = currentEnd;
+  }
+  fetch('/api/recent?' + new URLSearchParams(params))
     .then(r => r.json()).then(d => {
       totalRecent = d.total;
       renderRecent(d.items);

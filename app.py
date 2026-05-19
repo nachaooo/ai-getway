@@ -6,9 +6,25 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+CONFIG = {}
+_config_path = os.path.join(BASE_DIR, "config.json")
+if os.path.exists(_config_path):
+    try:
+        with open(_config_path, encoding="utf-8") as f:
+            CONFIG = json.load(f)
+    except Exception:
+        pass
+
+def _cfg(key, env_var, default):
+    return os.environ.get(env_var) or CONFIG.get(key, default)
+
 app = Flask(__name__)
 
-DB_PATH = os.environ.get("DB_PATH") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "usage.db")
+PORT = int(_cfg("port", "PORT", 5000))
+DB_PATH = _cfg("db_path", "DB_PATH", os.path.join(BASE_DIR, "usage.db"))
+KIMI_ESTIMATE_URL = _cfg("kimi_estimate_url", "KIMI_ESTIMATE_URL", "https://api.moonshot.cn/v1/tokenizers/estimate-token-count")
 
 # ── database ──────────────────────────────────────────────────
 
@@ -108,7 +124,7 @@ def count_messages_tokens(model: str, messages: list) -> int:
 
 def _kimi_estimate_tokens(model: str, messages: list, api_key: str) -> int | None:
     """调用 Kimi 官方 Token 估算 API 获取 prompt tokens 精确值"""
-    url = os.environ.get("KIMI_ESTIMATE_URL", "https://api.moonshot.cn/v1/tokenizers/estimate-token-count")
+    url = KIMI_ESTIMATE_URL
     try:
         resp = requests.post(
             url,
@@ -513,10 +529,9 @@ def api_usage():
     routes_rows = conn.execute("SELECT * FROM routes").fetchall()
     route_map = {r["provider_label"]: dict(r) for r in routes_rows}
 
-    month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
     month_rows = conn.execute(
-        "SELECT provider, COUNT(*) as cnt, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens FROM usage_logs WHERE request_time >= ? GROUP BY provider",
-        (month_start,),
+        "SELECT provider, COUNT(*) as cnt, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens FROM usage_logs WHERE request_time BETWEEN ? AND ? GROUP BY provider",
+        (start, end),
     ).fetchall()
     conn.close()
 
@@ -547,6 +562,8 @@ def api_usage():
 def api_recent():
     page = request.args.get("page", 1, type=int)
     page_size = request.args.get("page_size", 100, type=int)
+    start = request.args.get("start")
+    end = request.args.get("end")
     if page < 1:
         page = 1
     if page_size < 1:
@@ -554,10 +571,16 @@ def api_recent():
     offset = (page - 1) * page_size
 
     conn = get_db()
-    total = conn.execute("SELECT COUNT(*) as n FROM usage_logs").fetchone()["n"]
+    where = ""
+    params = []
+    if start and end:
+        where = "WHERE request_time BETWEEN ? AND ?"
+        params = [start, end]
+
+    total = conn.execute(f"SELECT COUNT(*) as n FROM usage_logs {where}", params).fetchone()["n"]
     rows = conn.execute(
-        "SELECT * FROM usage_logs ORDER BY request_time DESC LIMIT ? OFFSET ?",
-        (page_size, offset),
+        f"SELECT * FROM usage_logs {where} ORDER BY request_time DESC LIMIT ? OFFSET ?",
+        params + [page_size, offset],
     ).fetchall()
     conn.close()
 
@@ -634,6 +657,5 @@ if os.path.exists(IMPORT_FILE):
     conn.close()
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    print(f"AI Gateway running on http://0.0.0.0:{port}")
-    app.run(host="0.0.0.0", port=port)
+    print(f"AI Gateway running on http://0.0.0.0:{PORT}")
+    app.run(host="0.0.0.0", port=PORT)
