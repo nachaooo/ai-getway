@@ -513,7 +513,7 @@ def api_usage():
 
     month_start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
     month_rows = conn.execute(
-        "SELECT provider, COUNT(*) as cnt FROM usage_logs WHERE request_time >= ? GROUP BY provider",
+        "SELECT provider, COUNT(*) as cnt, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens FROM usage_logs WHERE request_time >= ? GROUP BY provider",
         (month_start,),
     ).fetchall()
     conn.close()
@@ -525,6 +525,8 @@ def api_usage():
         ppq = route.get("price_per_request", 0) or 0
         billing_by_provider[prov] = {
             "month_used": row["cnt"],
+            "prompt_tokens": row["prompt_tokens"] or 0,
+            "completion_tokens": row["completion_tokens"] or 0,
             "price_per_request": ppq,
             "monthly_quota": route.get("monthly_quota", 0) or 0,
             "estimated_cost": round(row["cnt"] * ppq, 2),

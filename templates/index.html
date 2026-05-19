@@ -161,19 +161,24 @@ function fetchAll() {
     .then(r => r.json()).then(d => {
       const bl = document.getElementById('billingList');
       const billing = d.billing || {};
-      const entries = Object.keys(billing);
+      const entries = Object.entries(billing);
       if (entries.length === 0) {
         bl.innerHTML = '<div class="empty">暂无数据</div>';
         return;
       }
-      let html = '';
-      for (const [prov, b] of Object.entries(billing)) {
+      entries.sort((a, b) => b[1].month_used - a[1].month_used);
+      let html = '<table><thead><tr><th>平台</th><th style="text-align:right">调用次数</th><th style="text-align:right">输入 Token</th><th style="text-align:right">输出 Token</th><th style="text-align:right">费用 / 配额</th></tr></thead><tbody>';
+      for (const [prov, b] of entries) {
         const pct = b.monthly_quota > 0 ? (b.month_used / b.monthly_quota * 100).toFixed(1) : null;
-        html += `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1a1a1a;font-size:12px">
-          <span style="color:#ccc">${prov}</span>
-          <span style="color:#888">${n(b.month_used)} 次${b.price_per_request ? ' / ¥' + b.estimated_cost : ''}${pct !== null ? ' / ' + pct + '%' : ''}</span>
-        </div>`;
+        html += `<tr>
+          <td style="color:#ccc">${prov}</td>
+          <td style="text-align:right">${n(b.month_used)}</td>
+          <td style="text-align:right">${n(b.prompt_tokens)}</td>
+          <td style="text-align:right">${n(b.completion_tokens)}</td>
+          <td style="text-align:right;color:#888">${b.price_per_request ? '¥' + b.estimated_cost : '-'}${pct !== null ? ' / ' + pct + '%' : ''}</td>
+        </tr>`;
       }
+      html += '</tbody></table>';
       bl.innerHTML = html;
     });
 }
