@@ -82,7 +82,7 @@ td:last-child, th:last-child { text-align: right; }
 <body>
 <div class="container">
   <div class="header">
-    <h1 id="pageTitle">AI Gateway 用量</h1>
+    <h1 id="pageTitle">AI Gateway</h1>
     <div class="toolbar">
       <button id="themeBtn" onclick="toggleTheme()">Light</button>
       <button id="langBtn" onclick="toggleLang()">EN</button>
@@ -94,6 +94,8 @@ td:last-child, th:last-child { text-align: right; }
     <button data-range="24h" data-i18n="range24h" class="active">24小时</button>
     <button data-range="7d" data-i18n="range7d">7天</button>
     <button data-range="30d" data-i18n="range30d">30天</button>
+    <button data-range="today" data-i18n="rangeToday">今日</button>
+    <button data-range="yesterday" data-i18n="rangeYesterday">昨日</button>
   </div>
 
   <div class="stats">
@@ -130,16 +132,16 @@ let currentStart = null, currentEnd = null;
 
 const I18N = {
   zh: {
-    pageTitle: 'AI Gateway 用量',
-    range1h: '1小时', range24h: '24小时', range7d: '7天', range30d: '30天',
+    pageTitle: 'AI Gateway',
+    range1h: '1小时', range24h: '24小时', range7d: '7天', range30d: '30天', rangeToday: '今日', rangeYesterday: '昨日',
     statRequests: '对话次数', statInput: '输入 Token', statOutput: '输出 Token',
     trendTitle: '用量趋势', billingTitle: '各平台使用量', recentTitle: '最近请求',
     colTime: '时间', colModel: '模型', colProvider: '平台', colInput: '输入', colOutput: '输出',
     prev: '上一页', next: '下一页', empty: '暂无数据', token: 'Token', requests: '请求数',
   },
   en: {
-    pageTitle: 'AI Gateway Usage',
-    range1h: '1h', range24h: '24h', range7d: '7d', range30d: '30d',
+    pageTitle: 'AI Gateway',
+    range1h: '1h', range24h: '24h', range7d: '7d', range30d: '30d', rangeToday: 'Today', rangeYesterday: 'Yesterday',
     statRequests: 'Conversations', statInput: 'Input Tokens', statOutput: 'Output Tokens',
     trendTitle: 'Usage Trend', billingTitle: 'Provider Usage', recentTitle: 'Recent Requests',
     colTime: 'Time', colModel: 'Model', colProvider: 'Provider', colInput: 'Input', colOutput: 'Output',
@@ -318,10 +320,19 @@ function fetchAll() {
   const now = new Date();
   const btn = document.querySelector('[data-range].active');
   const range = btn?.dataset?.range || '24h';
-  const hours = ({ '1h':1, '24h':24, '7d':168, '30d':720 })[range] || 24;
-  const groupBy = ({ '1h':'minute', '24h':'hour', '7d':'day', '30d':'day' })[range] || 'hour';
-  const s = localISO(new Date(now - hours * 3600000));
-  const e = localISO(now);
+  let s, e;
+  if (range === 'today') {
+    s = localISO(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+    e = localISO(now);
+  } else if (range === 'yesterday') {
+    s = localISO(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+    e = localISO(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+  } else {
+    const hours = ({ '1h':1, '24h':24, '7d':168, '30d':720 })[range] || 24;
+    s = localISO(new Date(now - hours * 3600000));
+    e = localISO(now);
+  }
+  const groupBy = ({ '1h':'minute', '24h':'hour', '7d':'day', '30d':'day', 'today':'hour', 'yesterday':'hour' })[range] || 'hour';
   currentStart = s;
   currentEnd = e;
 

@@ -264,13 +264,15 @@ def _handle_stream(target_url, headers, body_data, model, provider_label, prompt
 
     def do_log():
         if usage_data:
+            pt = usage_data.get("prompt_tokens", 0) or prompt_tokens
             ct = usage_data.get("completion_tokens", 0) or usage_data.get("output_tokens", 0)
             if not ct:
                 ct = count_tokens(model, complete_content)
                 print(f"  LOG: usage had 0 completion, fallback count={ct}")
         else:
+            pt = prompt_tokens
             ct = count_tokens(model, complete_content)
-        _log_usage(model, provider_label, prompt_tokens, ct, prompt_tokens + ct, path)
+        _log_usage(model, provider_label, pt, ct, pt + ct, path)
 
     response = Response(stream_with_context(generate()), content_type=resp.headers.get("content-type", "text/event-stream"))
     response.call_on_close(do_log)
@@ -376,6 +378,8 @@ def _proxy_passthrough(upstream_url, body, model, stream):
 
     data = resp.json()
     usage = data.get("usage", {})
+    if usage.get("prompt_tokens"):
+        prompt_tokens = usage["prompt_tokens"]
     completion_tokens = usage.get("completion_tokens", 0) or count_tokens(model, _extract_content(data))
     _log_usage(model, provider_label, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, request.path)
     return jsonify(data)
