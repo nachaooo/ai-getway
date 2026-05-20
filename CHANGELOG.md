@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-20
+
+### Added
+- Windows 托盘启动器支持开机自启动，可通过 `config.json` 的 `autostart` 字段或托盘右键菜单一键开关。
+
+### Changed
+- 开机自启动配置由独立 `setup-autostart.bat` 脚本改为 `config.json` 统一管理。
+
+### Removed
+- `setup-autostart.bat`（自启动功能已集成至 `scripts/tray.py`）。
+
 ## [0.1.0] - 2026-05-19
 
 ### Added

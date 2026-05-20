@@ -48,26 +48,6 @@ def init_db():
             endpoint TEXT
         )
     """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS routes (
-            route_name TEXT PRIMARY KEY,
-            upstream_base_url TEXT NOT NULL,
-            upstream_api_key TEXT NOT NULL,
-            provider_label TEXT NOT NULL DEFAULT '',
-            upstream_path TEXT NOT NULL DEFAULT '/chat/completions',
-            monthly_quota INTEGER NOT NULL DEFAULT 0,
-            price_per_request REAL NOT NULL DEFAULT 0,
-            created_at DATETIME DEFAULT (datetime('now', 'localtime'))
-        )
-    """)
-    for col in ("upstream_path", "monthly_quota", "price_per_request"):
-        try:
-            conn.execute(f"SELECT {col} FROM routes LIMIT 1")
-        except sqlite3.OperationalError:
-            if col == "upstream_path":
-                conn.execute(f"ALTER TABLE routes ADD COLUMN {col} TEXT NOT NULL DEFAULT '/chat/completions'")
-            else:
-                conn.execute(f"ALTER TABLE routes ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
     conn.commit()
     conn.close()
 
@@ -145,19 +125,6 @@ def _kimi_estimate_tokens(model: str, messages: list, api_key: str) -> int | Non
 
 # ── core proxy logic ──────────────────────────────────────────
 
-MODEL_PROVIDER_MAP = {
-    "gpt-": "openai", "o1": "openai", "o3": "openai",
-    "claude-": "anthropic",
-    "gemini-": "gemini",
-    "deepseek-": "deepseek",
-}
-
-def _detect_provider_from_model(model: str) -> str | None:
-    for prefix, name in MODEL_PROVIDER_MAP.items():
-        if model.startswith(prefix):
-            return name
-    return None
-
 def _extract_content(data: dict) -> str:
     try:
         if "choices" in data:
@@ -172,23 +139,6 @@ def _extract_content(data: dict) -> str:
     except Exception:
         pass
     return ""
-
-def _openai_to_anthropic(body: dict) -> dict:
-    system_msg = None
-    messages = []
-    for msg in body.get("messages", []):
-        if msg["role"] == "system":
-            system_msg = msg["content"]
-        else:
-            messages.append({"role": msg["role"], "content": msg["content"]})
-    result = {
-        "model": body["model"],
-        "max_tokens": body.get("max_tokens", 4096),
-        "messages": messages,
-    }
-    if system_msg:
-        result["system"] = system_msg
-    return result
 
 def _log_usage(model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint):
     try:
@@ -278,60 +228,6 @@ def _handle_stream(target_url, headers, body_data, model, provider_label, prompt
     response.call_on_close(do_log)
     return response
 
-def _do_proxy(upstream_base_url, upstream_api_key, provider_label, upstream_path="/chat/completions"):
-    body = request.get_json(force=True)
-    model = body.get("model", "")
-    stream = body.get("stream", False)
-
-    prompt_tokens = count_messages_tokens(model, body.get("messages", []))
-    if provider_label == "kimi" and upstream_api_key:
-        estimated = _kimi_estimate_tokens(model, body.get("messages", []), upstream_api_key)
-        if estimated is not None:
-            prompt_tokens = estimated
-    if os.environ.get("KIMI_FORCE_ESTIMATE") and provider_label != "kimi":
-        estimated = _kimi_estimate_tokens(model, body.get("messages", []), upstream_api_key or "")
-        if estimated is not None:
-            prompt_tokens = estimated
-
-    headers = {"Content-Type": "application/json"}
-
-    if provider_label == "anthropic":
-        if upstream_api_key:
-            headers["x-api-key"] = upstream_api_key
-        headers["anthropic-version"] = "2023-06-01"
-        body_data = _openai_to_anthropic(body)
-        target_url = f"{upstream_base_url}/v1/messages"
-    elif provider_label == "gemini":
-        if upstream_api_key:
-            headers["x-goog-api-key"] = upstream_api_key
-        body_data = body
-        target_url = f"{upstream_base_url}/v1beta/models/{model}:generateContent"
-    else:
-        if upstream_api_key:
-            headers["Authorization"] = f"Bearer {upstream_api_key}"
-        body_data = body
-        target_url = f"{upstream_base_url}{upstream_path}"
-
-    if stream:
-        return _handle_stream(target_url, headers, body_data, model, provider_label, prompt_tokens)
-
-    resp = requests.post(target_url, headers=headers, json=body_data, timeout=300)
-    if not resp.ok:
-        return jsonify({"error": resp.text}), resp.status_code
-
-    data = resp.json()
-
-    if provider_label == "anthropic":
-        completion_tokens = data.get("usage", {}).get("output_tokens", 0) or count_tokens(model, _extract_content(data))
-    elif provider_label == "gemini":
-        completion_tokens = count_tokens(model, _extract_content(data))
-    else:
-        usage = data.get("usage", {})
-        completion_tokens = usage.get("completion_tokens", 0) or count_tokens(model, _extract_content(data))
-
-    _log_usage(model, provider_label, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, request.path)
-    return jsonify(data)
-
 # ── endpoints ─────────────────────────────────────────────────
 
 def _clean_messages(body_dict: dict) -> dict:
@@ -395,17 +291,7 @@ def proxy():
     if upstream_url:
         return _proxy_passthrough(upstream_url.rstrip("/") + "/chat/completions", body, model, stream)
 
-    provider_label = _detect_provider_from_model(model)
-    if not provider_label:
-        return jsonify({"error": "unsupported model, use ?by=<upstream_url>"}), 400
-
-    conn = get_db()
-    route = conn.execute("SELECT * FROM routes WHERE provider_label=?", (provider_label,)).fetchone()
-    conn.close()
-    if not route:
-        return jsonify({"error": f"no route for {provider_label}, use ?by=<upstream_url>"}), 404
-
-    return _do_proxy(route["upstream_base_url"], route["upstream_api_key"], provider_label, route["upstream_path"])
+    return jsonify({"error": "?by=<upstream_url> required"}), 400
 
 
 @app.route("/v1", methods=["POST"])
@@ -421,51 +307,6 @@ def proxy_v1():
         return jsonify({"error": "?by=<upstream_url> required"}), 400
 
     return _proxy_passthrough(upstream_url, body, model, stream)
-
-
-@app.route("/<route_name>/v1/chat/completions", methods=["POST"])
-def proxy_route(route_name):
-    conn = get_db()
-    route = conn.execute("SELECT * FROM routes WHERE route_name=?", (route_name,)).fetchone()
-    conn.close()
-    if not route:
-        return jsonify({"error": f"unknown route: {route_name}"}), 404
-    return _do_proxy(route["upstream_base_url"], route["upstream_api_key"], route["provider_label"], route["upstream_path"])
-
-
-@app.route("/api/routes", methods=["GET", "POST", "DELETE"])
-def manage_routes():
-    if request.method == "GET":
-        conn = get_db()
-        rows = conn.execute("SELECT * FROM routes ORDER BY route_name").fetchall()
-        conn.close()
-        return jsonify([dict(r) for r in rows])
-
-    if request.method == "DELETE":
-        data = request.get_json(force=True)
-        conn = get_db()
-        conn.execute("DELETE FROM routes WHERE route_name=?", (data["route_name"],))
-        conn.commit()
-        conn.close()
-        return jsonify({"status": "deleted"})
-
-    data = request.get_json(force=True)
-    conn = get_db()
-    conn.execute(
-        "INSERT OR REPLACE INTO routes (route_name, upstream_base_url, upstream_api_key, provider_label, upstream_path, monthly_quota, price_per_request) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            data["route_name"],
-            data["upstream_base_url"],
-            data["upstream_api_key"],
-            data.get("provider_label", data["route_name"]),
-            data.get("upstream_path", "/chat/completions"),
-            int(data.get("monthly_quota", 0)),
-            float(data.get("price_per_request", 0)),
-        ),
-    )
-    conn.commit()
-    conn.close()
-    return jsonify({"status": "ok"})
 
 
 @app.route("/api/usage")
@@ -529,10 +370,6 @@ def api_usage():
             "request_count": r["request_count"],
         })
 
-    recent = conn.execute("SELECT * FROM usage_logs ORDER BY request_time DESC LIMIT 100").fetchall()
-    routes_rows = conn.execute("SELECT * FROM routes").fetchall()
-    route_map = {r["provider_label"]: dict(r) for r in routes_rows}
-
     month_rows = conn.execute(
         "SELECT provider, COUNT(*) as cnt, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens FROM usage_logs WHERE request_time BETWEEN ? AND ? GROUP BY provider",
         (start, end),
@@ -542,15 +379,10 @@ def api_usage():
     billing_by_provider = {}
     for row in month_rows:
         prov = row["provider"]
-        route = route_map.get(prov, {})
-        ppq = route.get("price_per_request", 0) or 0
         billing_by_provider[prov] = {
             "month_used": row["cnt"],
             "prompt_tokens": row["prompt_tokens"] or 0,
             "completion_tokens": row["completion_tokens"] or 0,
-            "price_per_request": ppq,
-            "monthly_quota": route.get("monthly_quota", 0) or 0,
-            "estimated_cost": round(row["cnt"] * ppq, 2),
         }
 
     return jsonify({
@@ -602,64 +434,7 @@ def dashboard():
     return render_template("index.html", refresh_interval=refresh_interval)
 
 
-@app.route("/setup", methods=["GET", "POST"])
-def setup():
-    conn = get_db()
-    if request.method == "POST":
-        data = request.form
-        if "route_name" in data:
-            conn.execute(
-                "INSERT OR REPLACE INTO routes (route_name, upstream_base_url, upstream_api_key, provider_label, upstream_path, monthly_quota, price_per_request) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    data["route_name"],
-                    data["upstream_base_url"],
-                    data["upstream_api_key"],
-                    data.get("provider_label", data["route_name"]),
-                    data.get("upstream_path", "/chat/completions"),
-                    int(data.get("monthly_quota", 0)),
-                    float(data.get("price_per_request", 0)),
-                ),
-            )
-            conn.commit()
-        elif "delete_route" in data:
-            conn.execute("DELETE FROM routes WHERE route_name=?", (data["delete_route"],))
-            conn.commit()
-        conn.close()
-        return jsonify({"status": "ok"})
-
-    routes = conn.execute("SELECT * FROM routes ORDER BY route_name").fetchall()
-    conn.close()
-    return render_template("setup.html", routes=[dict(r) for r in routes])
-
-
 init_db()
-
-IMPORT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "import_routes.json")
-if os.path.exists(IMPORT_FILE):
-    conn = get_db()
-    count = conn.execute("SELECT COUNT(*) as n FROM routes").fetchone()["n"]
-    if count == 0:
-        try:
-            with open(IMPORT_FILE, encoding="utf-8") as f:
-                routes = json.load(f)
-            for r in routes:
-                conn.execute(
-                    "INSERT OR IGNORE INTO routes (route_name, upstream_base_url, upstream_api_key, provider_label, upstream_path, monthly_quota, price_per_request) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        r["route_name"],
-                        r["upstream_base_url"],
-                        r["upstream_api_key"],
-                        r.get("provider_label", r["route_name"]),
-                        r.get("upstream_path", "/chat/completions"),
-                        int(r.get("monthly_quota", 0)),
-                        float(r.get("price_per_request", 0)),
-                    ),
-                )
-            conn.commit()
-            print(f"Auto-imported {len(routes)} routes from import_routes.json")
-        except Exception as e:
-            print(f"Auto-import failed: {e}")
-    conn.close()
 
 if __name__ == "__main__":
     print(f"AI Gateway running on http://0.0.0.0:{PORT}")
