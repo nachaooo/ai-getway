@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import sqlite3
 from datetime import datetime, timedelta
@@ -8,8 +9,16 @@ from flask import Flask, request, jsonify, render_template, Response, stream_wit
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# PyInstaller 支持：exe 所在目录为可写目录，sys._MEIPASS 为打包资源目录
+if getattr(sys, 'frozen', False):
+    EXE_DIR = os.path.dirname(sys.executable)
+    RESOURCE_DIR = sys._MEIPASS
+else:
+    EXE_DIR = BASE_DIR
+    RESOURCE_DIR = BASE_DIR
+
 CONFIG = {}
-_config_path = os.path.join(BASE_DIR, "config.json")
+_config_path = os.path.join(EXE_DIR, "config.json")
 if os.path.exists(_config_path):
     try:
         with open(_config_path, encoding="utf-8") as f:
@@ -20,11 +29,14 @@ if os.path.exists(_config_path):
 def _cfg(key, env_var, default):
     return os.environ.get(env_var) or CONFIG.get(key, default)
 
-app = Flask(__name__)
+app = Flask(
+    __name__,
+    template_folder=os.path.join(RESOURCE_DIR, "templates"),
+    static_folder=os.path.join(RESOURCE_DIR, "static"),
+)
 
 PORT = int(_cfg("port", "PORT", 5000))
-DB_PATH = _cfg("db_path", "DB_PATH", os.path.join(BASE_DIR, "usage.db"))
-KIMI_ESTIMATE_URL = _cfg("kimi_estimate_url", "KIMI_ESTIMATE_URL", "https://api.moonshot.cn/v1/tokenizers/estimate-token-count")
+DB_PATH = _cfg("db_path", "DB_PATH", os.path.join(EXE_DIR, "usage.db"))
 
 # ── database ──────────────────────────────────────────────────
 
@@ -53,7 +65,7 @@ def init_db():
 
 # ── tokenizer ──────────────────────────────────────────────────
 
-DEEPSEEK_TOKENIZER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tokenizers", "deepseek")
+DEEPSEEK_TOKENIZER_DIR = os.path.join(RESOURCE_DIR, "tokenizers", "deepseek")
 _deepseek_tokenizer = None
 
 def get_deepseek_tokenizer():
@@ -99,29 +111,6 @@ def count_messages_tokens(model: str, messages: list) -> int:
         else:
             total += count_tokens(model, str(content))
     return total
-
-# ── Kimi estimate-token-count ─────────────────────────────────
-
-def _kimi_estimate_tokens(model: str, messages: list, api_key: str) -> int | None:
-    """调用 Kimi 官方 Token 估算 API 获取 prompt tokens 精确值"""
-    url = KIMI_ESTIMATE_URL
-    try:
-        resp = requests.post(
-            url,
-            headers={"Authorization": api_key if api_key.startswith("Bearer ") else f"Bearer {api_key}",
-                     "Content-Type": "application/json"},
-            json={"model": model, "messages": messages},
-            timeout=10,
-        )
-        if resp.ok:
-            total = resp.json().get("data", {}).get("total_tokens")
-            if total is not None:
-                print(f"  KIMI ESTIMATE: {total} tokens")
-                return total
-        print(f"  KIMI ESTIMATE FAIL: {resp.status_code} {resp.text[:100]}")
-    except Exception as e:
-        print(f"  KIMI ESTIMATE ERROR: {e}")
-    return None
 
 # ── core proxy logic ──────────────────────────────────────────
 
@@ -255,10 +244,6 @@ def _proxy_passthrough(upstream_url, body, model, stream):
     provider_label = hostname.split(":")[0]
 
     prompt_tokens = count_messages_tokens(model, body.get("messages", []))
-    if "kimi" in hostname or "moonshot" in hostname or os.environ.get("KIMI_FORCE_ESTIMATE"):
-        estimated = _kimi_estimate_tokens(model, body.get("messages", []), headers.get("Authorization", ""))
-        if estimated is not None:
-            prompt_tokens = estimated
     raw_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
     if stream:

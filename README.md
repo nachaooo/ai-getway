@@ -17,8 +17,8 @@
 - **Stream buffering** — Parses SSE events by `\n\n` delimiter, prevents JSON truncation
 - **Empty message filter** — Auto-filters empty assistant messages (required by Kimi)
 - **Dashboard** — Dark-themed stats + timeline chart + billing + recent requests (500 rows)
-- **Tray launcher** — Windows system tray icon with right-click menu (start.vbs)
-- **Auto-start** — Configurable via `config.json` or tray menu
+- **Tray launcher** — Windows system tray icon with right-click menu (`start.vbs`)
+- **Auto-start** — Toggle from the tray menu (appears in Windows Settings)
 
 ## Quick Start
 
@@ -80,8 +80,15 @@ python app.py
 **System tray (Windows):**
 Double-click `start.vbs` — installs dependencies automatically, runs in background with tray icon.
 
+**Build standalone executable (Windows):**
+```bash
+pip install pyinstaller
+pyinstaller "AI Gateway.spec"
+```
+Output: `dist/AI Gateway.exe` (~26 MB, single file, no console window).
+
 **Auto-start (Windows):**
-Set `"autostart": true` in `config.json`, or toggle it directly from the tray icon right-click menu.
+Toggle it directly from the tray icon right-click menu. It will appear in Windows Settings → Apps → Startup, where you can also manage it.
 
 ## Project Structure
 
@@ -89,7 +96,9 @@ Set `"autostart": true` in `config.json`, or toggle it directly from the tray ic
 ai-gateway/
 ├── app.py               # Core: proxy, DB, API endpoints
 ├── config.json          # Configuration file
-├── start.vbs            # VBS launcher (auto-dep-install)
+├── scripts/
+│   ├── tray.py          # System tray launcher
+│   └── start.vbs        # VBS launcher (auto-dep-install)
 ├── requirements.txt
 ├── Dockerfile
 ├── README.md
@@ -99,8 +108,6 @@ ai-gateway/
 │   └── index.html       # Web dashboard
 ├── static/
 │   └── icon.png         # Tray icon
-├── scripts/
-│   └── tray.py          # System tray launcher
 └── tokenizers/
     └── deepseek/        # DeepSeek LlamaTokenizer
 ```
@@ -112,7 +119,6 @@ ai-gateway/
 | `PORT` | `5000` | Listening port |
 | `DB_PATH` | `./usage.db` | SQLite database path |
 | `KIMI_ESTIMATE_URL` | `https://api.moonshot.cn/v1/tokenizers/estimate-token-count` | Kimi token estimation API |
-| `AUTOSTART` | `false` | Auto-start on login (Windows tray mode) |
 
 ## Docker
 
@@ -157,12 +163,21 @@ python app.py
 ### 启动方式
 
 - **命令行**：`python app.py`
-- **Windows 托盘**：双击 `start.vbs`
+- **Windows 托盘**：双击 `scripts/start.vbs`
 - **Docker**：`docker run -d -p 5000:5000 ai-gateway`
+
+### 构建独立可执行文件
+
+```bash
+pip install pyinstaller
+pyinstaller "AI Gateway.spec"
+```
+
+输出：`dist/AI Gateway.exe`（约 26 MB，单文件，无控制台窗口）。
 
 ### 开机自启动
 
-在 `config.json` 中设置 `"autostart": true`，或通过托盘图标右键菜单直接开关。
+右键托盘图标 → 「开机自启动」一键开关。该选项会同步出现在 Windows 设置 → 应用 → 启动 中，也可以在那里管理。
 
 ### 特性
 
@@ -171,7 +186,7 @@ python app.py
 - 🧮 精确 Token 计数（含 reasoning_content）
 - 🔌 兼容任何 OpenAI 兼容客户端
 - 🪟 Windows 托盘后台运行
-- 🔄 开机自启动（config.json 或托盘菜单一键开关）
+- 🔄 开机自启动（托盘菜单一键开关，同步到系统启动设置）
 
 ---
 

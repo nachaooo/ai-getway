@@ -2,6 +2,5 @@
   "port": 5000,
   "db_path": "./usage.db",
   "kimi_estimate_url": "https://api.moonshot.cn/v1/tokenizers/estimate-token-count",
-  "refresh_interval": 2,
-  "autostart": true
+  "refresh_interval": 2
 }

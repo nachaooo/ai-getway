@@ -1,11 +1,21 @@
-import subprocess, os, sys, threading, webbrowser, time, signal, socket, json
+import subprocess, os, sys, threading, webbrowser, time, signal, socket, json, winreg
 import pystray
 from PIL import Image
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 app_proc = None
-TASK_NAME = "AI-Gateway-AutoStart"
-START_VBS = os.path.join(BASE, "start.vbs")
+ICON_PNG = os.path.join(BASE, "static", "icon.png")
+ICON_ICO = os.path.join(BASE, "static", "icon.ico")
+LNK_NAME = "AI Gateway.lnk"
+STARTUP_DIR = os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup")
+LNK_PATH = os.path.join(STARTUP_DIR, LNK_NAME)
+OLD_REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+OLD_REG_NAME = "AI-Gateway-AutoStart"
+
+_PYTHONW = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+if not os.path.exists(_PYTHONW):
+    _PYTHONW = sys.executable
+_TRAY_PY = os.path.join(BASE, "scripts", "tray.py")
 
 def _load_config():
     cfg_path = os.path.join(BASE, "config.json")
@@ -17,68 +27,64 @@ def _load_config():
             pass
     return {}
 
-def _save_config(cfg):
-    cfg_path = os.path.join(BASE, "config.json")
-    try:
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-
 def _get_port():
     return _load_config().get("port", 5000)
 
-def _task_exists():
+def _cleanup_old_registry():
     try:
-        result = subprocess.run(
-            ["schtasks", "/query", "/tn", TASK_NAME],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        return result.returncode == 0
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, OLD_REG_PATH, 0, winreg.KEY_WRITE) as key:
+            winreg.DeleteValue(key, OLD_REG_NAME)
+    except FileNotFoundError:
+        pass
+
+def _ensure_ico():
+    if os.path.exists(ICON_ICO):
+        return
+    try:
+        img = Image.open(ICON_PNG)
+        img.save(ICON_ICO, format="ICO", sizes=[(32, 32), (64, 64), (128, 128)])
     except Exception:
-        return False
+        pass
 
-def _set_task(enabled):
+def _create_lnk():
+    _ensure_ico()
+    ps = f'''
+    $WshShell = New-Object -comObject WScript.Shell
+    $Shortcut = $WshShell.CreateShortcut({json.dumps(LNK_PATH)})
+    $Shortcut.TargetPath = {json.dumps(_PYTHONW)}
+    $Shortcut.Arguments = {json.dumps(_TRAY_PY)}
+    $Shortcut.WorkingDirectory = {json.dumps(BASE)}
+    $Shortcut.IconLocation = {json.dumps(ICON_ICO)}
+    $Shortcut.Save()
+    '''
+    subprocess.run(
+        ["powershell", "-Command", ps],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+
+def _remove_lnk():
+    if os.path.exists(LNK_PATH):
+        os.remove(LNK_PATH)
+
+def _is_autostart_enabled():
+    return os.path.exists(LNK_PATH)
+
+def _set_autostart(enabled):
+    _cleanup_old_registry()
     if enabled:
-        subprocess.run(
-            [
-                "schtasks", "/create", "/tn", TASK_NAME,
-                "/tr", f'wscript.exe "{START_VBS}"',
-                "/sc", "onlogon", "/rl", "limited", "/f",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
+        _create_lnk()
     else:
-        subprocess.run(
-            ["schtasks", "/delete", "/tn", TASK_NAME, "/f"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-
-def sync_autostart():
-    cfg = _load_config()
-    desired = cfg.get("autostart", False)
-    exists = _task_exists()
-    if desired and not exists:
-        _set_task(True)
-    elif not desired and exists:
-        _set_task(False)
+        _remove_lnk()
 
 def toggle_autostart(icon, item):
-    cfg = _load_config()
-    current = cfg.get("autostart", False)
-    cfg["autostart"] = not current
-    _save_config(cfg)
-    _set_task(cfg["autostart"])
+    current = _is_autostart_enabled()
+    _set_autostart(not current)
     icon.update_menu()
 
 def is_autostart_checked(item):
-    return _load_config().get("autostart", False)
+    return _is_autostart_enabled()
 
 def start_gateway():
     global app_proc
@@ -129,7 +135,6 @@ def create_icon():
     return Image.open(os.path.join(BASE, "static", "icon.png"))
 
 def main():
-    sync_autostart()
     start_gateway()
     time.sleep(2)
     icon = pystray.Icon(

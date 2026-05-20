@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-20
+
+### Added
+- PyInstaller 单文件 exe 构建支持（`main.py` + `AI Gateway.spec`），输出约 26 MB 的独立可执行文件。
+- 系统托盘支持日期命名日志文件（`logs/AI-Gateway-YYYY-MM-DD.log`）。
+- Windows 启动列表显示项目图标和正确名称（通过 `.lnk` 快捷方式实现）。
+
+### Changed
+- 开机自启动由注册表改为启动文件夹 `.lnk` 快捷方式，同步显示在 Windows 设置 → 应用 → 启动。
+- 移除 `config.json` 中的 `autostart` 字段，完全由托盘菜单/系统设置控制。
+- 目录整理：`build/`、`dist/`、`logs/` 等加入 `.gitignore`。
+
+### Removed
+- 移除 Kimi 官方 `estimate-token-count` 精确估算接口（因认证问题频繁失败），统一使用通用 token 估算。
+
 ## [0.2.0] - 2026-05-20
 
 ### Added
