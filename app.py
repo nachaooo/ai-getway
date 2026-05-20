@@ -598,7 +598,8 @@ def api_recent():
 
 @app.route("/")
 def dashboard():
-    return render_template("index.html")
+    refresh_interval = int(_cfg("refresh_interval", "REFRESH_INTERVAL", 15)) * 1000
+    return render_template("index.html", refresh_interval=refresh_interval)
 
 
 @app.route("/setup", methods=["GET", "POST"])

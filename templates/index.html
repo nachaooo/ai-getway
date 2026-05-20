@@ -77,6 +77,21 @@ td:last-child, th:last-child { text-align: right; }
 .pages button { background: var(--btn-bg); border: 1px solid var(--btn-border); color: var(--btn-fg); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
 .pages button.active { background: var(--btn-active-bg); border-color: var(--btn-active-border); color: var(--btn-active-fg); }
 .section .chart-wrap { height: 160px; position: relative; }
+[data-layout="kanban"] body { height: 100vh; overflow: hidden; padding: 12px; }
+[data-layout="kanban"] .container { max-width: 1200px; height: 100%; display: flex; flex-direction: column; gap: 10px; }
+[data-layout="kanban"] .header,
+[data-layout="kanban"] .controls { margin-bottom: 0; flex-shrink: 0; }
+[data-layout="kanban"] .kanban-main { flex: 1; min-height: 0; display: flex; gap: 12px; overflow: hidden; }
+[data-layout="kanban"] .kanban-left { flex: 1; display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: hidden; }
+[data-layout="kanban"] .kanban-right { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+[data-layout="kanban"] .kanban-left .stats { margin-bottom: 0; flex-shrink: 0; }
+[data-layout="kanban"] .kanban-left .section,
+[data-layout="kanban"] .kanban-right .section { margin-bottom: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+[data-layout="kanban"] .chart-wrap { flex-shrink: 0; }
+[data-layout="kanban"] #billingList { flex: 1; overflow-y: auto; min-height: 0; }
+[data-layout="kanban"] .table-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+[data-layout="kanban"] .pages { flex-shrink: 0; margin-top: 8px; }
+[data-layout="kanban"] h2 { flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -84,6 +99,7 @@ td:last-child, th:last-child { text-align: right; }
   <div class="header">
     <h1 id="pageTitle">AI Gateway</h1>
     <div class="toolbar">
+      <button id="layoutBtn" onclick="toggleLayout()">看板</button>
       <button id="themeBtn" onclick="toggleTheme()">Light</button>
       <button id="langBtn" onclick="toggleLang()">EN</button>
     </div>
@@ -98,29 +114,37 @@ td:last-child, th:last-child { text-align: right; }
     <button data-range="yesterday" data-i18n="rangeYesterday">昨日</button>
   </div>
 
-  <div class="stats">
-    <div class="stat"><div class="n" id="totalRequests">-</div><div class="l" data-i18n="statRequests">对话次数</div></div>
-    <div class="stat"><div class="n" id="promptTokens">-</div><div class="l" data-i18n="statInput">输入 Token</div></div>
-    <div class="stat"><div class="n" id="completionTokens">-</div><div class="l" data-i18n="statOutput">输出 Token</div></div>
-  </div>
+  <div class="kanban-main">
+    <div class="kanban-left">
+      <div class="stats">
+        <div class="stat"><div class="n" id="totalRequests">-</div><div class="l" data-i18n="statRequests">对话次数</div></div>
+        <div class="stat"><div class="n" id="promptTokens">-</div><div class="l" data-i18n="statInput">输入 Token</div></div>
+        <div class="stat"><div class="n" id="completionTokens">-</div><div class="l" data-i18n="statOutput">输出 Token</div></div>
+      </div>
 
-  <div class="section">
-    <h2 data-i18n="trendTitle">用量趋势</h2>
-    <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
-  </div>
+      <div class="section">
+        <h2 data-i18n="trendTitle">用量趋势</h2>
+        <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+      </div>
 
-  <div class="section">
-    <h2 data-i18n="billingTitle">各平台使用量</h2>
-    <div id="billingList"></div>
-  </div>
+      <div class="section">
+        <h2 data-i18n="billingTitle">各平台使用量</h2>
+        <div id="billingList"></div>
+      </div>
+    </div>
 
-    <div class="section">
-    <h2 data-i18n="recentTitle">最近请求</h2>
-    <table>
-      <thead><tr><th data-i18n="colTime">时间</th><th data-i18n="colModel">模型</th><th data-i18n="colProvider">平台</th><th data-i18n="colInput">输入</th><th data-i18n="colOutput">输出</th></tr></thead>
-      <tbody id="recentTable"></tbody>
-    </table>
-    <div class="pages" id="pages"></div>
+    <div class="kanban-right">
+      <div class="section">
+        <h2 data-i18n="recentTitle">最近请求</h2>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th data-i18n="colTime">时间</th><th data-i18n="colModel">模型</th><th data-i18n="colProvider">平台</th><th data-i18n="colInput">输入</th><th data-i18n="colOutput">输出</th></tr></thead>
+            <tbody id="recentTable"></tbody>
+          </table>
+        </div>
+        <div class="pages" id="pages"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -138,6 +162,7 @@ const I18N = {
     trendTitle: '用量趋势', billingTitle: '各平台使用量', recentTitle: '最近请求',
     colTime: '时间', colModel: '模型', colProvider: '平台', colInput: '输入', colOutput: '输出',
     prev: '上一页', next: '下一页', empty: '暂无数据', token: 'Token', requests: '请求数',
+    layoutDefault: '默认', layoutKanban: '看板',
   },
   en: {
     pageTitle: 'AI Gateway',
@@ -146,6 +171,7 @@ const I18N = {
     trendTitle: 'Usage Trend', billingTitle: 'Provider Usage', recentTitle: 'Recent Requests',
     colTime: 'Time', colModel: 'Model', colProvider: 'Provider', colInput: 'Input', colOutput: 'Output',
     prev: 'Prev', next: 'Next', empty: 'No data', token: 'Token', requests: 'Requests',
+    layoutDefault: 'Default', layoutKanban: 'Kanban',
   }
 };
 
@@ -156,6 +182,7 @@ function applyLang() {
     if (I18N[lang][key]) el.textContent = I18N[lang][key];
   });
   document.getElementById('langBtn').textContent = lang === 'zh' ? 'EN' : '中';
+  applyLayout();
 }
 
 function toggleLang() {
@@ -183,13 +210,36 @@ function toggleTheme() {
   fetchRecent(page);
 }
 
+function applyLayout() {
+  const lang = document.documentElement.getAttribute('data-lang') || 'zh';
+  const layout = document.documentElement.getAttribute('data-layout') || 'default';
+  document.getElementById('layoutBtn').textContent = layout === 'default' ? I18N[lang].layoutKanban : I18N[lang].layoutDefault;
+}
+
+function toggleLayout() {
+  const cur = document.documentElement.getAttribute('data-layout') || 'default';
+  const next = cur === 'default' ? 'kanban' : 'default';
+  document.documentElement.setAttribute('data-layout', next);
+  localStorage.setItem('ag_layout', next);
+  applyLayout();
+}
+
 function initPrefs() {
   const savedTheme = localStorage.getItem('ag_theme');
   const savedLang = localStorage.getItem('ag_lang');
+  const savedRange = localStorage.getItem('ag_range');
+  const savedLayout = localStorage.getItem('ag_layout');
   if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
   if (savedLang) document.documentElement.setAttribute('data-lang', savedLang);
+  if (savedRange) {
+    document.querySelectorAll('[data-range]').forEach(b => b.classList.remove('active'));
+    const btn = document.querySelector(`[data-range="${savedRange}"]`);
+    if (btn) btn.classList.add('active');
+  }
+  if (savedLayout) document.documentElement.setAttribute('data-layout', savedLayout);
   applyTheme();
   applyLang();
+  applyLayout();
 }
 
 function chartColors() {
@@ -282,8 +332,28 @@ function renderChart(timeline, groupBy) {
   const counts = periods.map(p => merged[p].request_count);
   const c = chartColors();
   const lang = document.documentElement.getAttribute('data-lang') || 'zh';
+
+  if (window._chart) {
+    window._chart.data.labels = labels;
+    window._chart.data.datasets[0].data = tokens;
+    window._chart.data.datasets[1].data = counts;
+    window._chart.data.datasets[0].label = I18N[lang].token;
+    window._chart.data.datasets[1].label = I18N[lang].requests;
+    window._chart.options.plugins.legend.labels.color = c.legend;
+    window._chart.options.plugins.tooltip.backgroundColor = c.tooltipBg;
+    window._chart.options.plugins.tooltip.titleColor = c.tooltipTitle;
+    window._chart.options.plugins.tooltip.bodyColor = c.tooltipBody;
+    window._chart.options.plugins.tooltip.borderColor = c.tooltipBorder;
+    window._chart.options.scales.x.ticks.color = c.tick;
+    window._chart.options.scales.x.grid.color = c.grid;
+    window._chart.options.scales.y.ticks.color = c.tick;
+    window._chart.options.scales.y.grid.color = c.grid;
+    window._chart.options.scales.y1.ticks.color = c.tick;
+    window._chart.update('none');
+    return;
+  }
+
   const ctx = document.getElementById('trendChart').getContext('2d');
-  if (window._chart) window._chart.destroy();
   window._chart = new Chart(ctx, {
     type: 'line',
     data: {
@@ -293,21 +363,21 @@ function renderChart(timeline, groupBy) {
         { label: I18N[lang].requests, data: counts, borderColor: '#6b7280', backgroundColor: 'rgba(107,114,128,.06)', fill: true, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 20, tension: .2, yAxisID: 'y1' },
       ]
     },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          legend: { labels: { color: c.legend, boxWidth: 10, padding: 8, font: { size: 10 } } },
-          tooltip: {
-            backgroundColor: c.tooltipBg, titleColor: c.tooltipTitle, bodyColor: c.tooltipBody,
-            borderColor: c.tooltipBorder, borderWidth: 1, cornerRadius: 6,
-            padding: 10, titleFont: { size: 11 }, bodyFont: { size: 11 },
-            callbacks: {
-              label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`
-            }
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: c.legend, boxWidth: 10, padding: 8, font: { size: 10 } } },
+        tooltip: {
+          backgroundColor: c.tooltipBg, titleColor: c.tooltipTitle, bodyColor: c.tooltipBody,
+          borderColor: c.tooltipBorder, borderWidth: 1, cornerRadius: 6,
+          padding: 10, titleFont: { size: 11 }, bodyFont: { size: 11 },
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`
           }
-        },
-        scales: {
+        }
+      },
+      scales: {
         x: { ticks: { color: c.tick, font: { size: 9 }, maxTicksLimit: 12 }, grid: { color: c.grid } },
         y: { ticks: { color: c.tick, font: { size: 9 } }, grid: { color: c.grid }, beginAtZero: true },
         y1: { position: 'right', ticks: { color: c.tick, font: { size: 9 } }, grid: { display: false }, beginAtZero: true },
@@ -387,6 +457,7 @@ document.querySelectorAll('[data-range]').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('[data-range]').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    localStorage.setItem('ag_range', btn.dataset.range);
     page = 1;
     fetchAll();
     fetchRecent(1);
@@ -396,7 +467,7 @@ document.querySelectorAll('[data-range]').forEach(btn => {
 initPrefs();
 fetchAll();
 fetchRecent(1);
-setInterval(() => { fetchAll(); fetchRecent(page); }, 15000);
+setInterval(() => { fetchAll(); fetchRecent(page); }, {{ refresh_interval }});
 </script>
 </body>
 </html>

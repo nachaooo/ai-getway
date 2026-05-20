@@ -24,6 +24,11 @@ def stop_gateway():
 def open_dashboard(icon, item):
     webbrowser.open("http://localhost:5000")
 
+def restart_gateway(icon, item):
+    stop_gateway()
+    time.sleep(1)
+    start_gateway()
+
 def quit_app(icon, item):
     stop_gateway()
     icon.stop()
@@ -39,6 +44,7 @@ def main():
         "ai_gateway", create_icon(), "AI Gateway",
         menu=pystray.Menu(
             pystray.MenuItem("打开看板", open_dashboard),
+            pystray.MenuItem("重启服务", restart_gateway),
             pystray.MenuItem("退出", quit_app),
         )
     )
