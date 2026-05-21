@@ -1,6 +1,6 @@
 import subprocess, os, sys, threading, webbrowser, time, signal, socket, json, winreg
 import pystray
-from PIL import Image
+from PIL import Image, ImageDraw
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 app_proc = None
@@ -122,9 +122,17 @@ def open_dashboard(icon, item):
     webbrowser.open(f"http://localhost:{_get_port()}")
 
 def restart_gateway(icon, item):
+    try:
+        icon.icon = _add_badge(create_icon())
+    except Exception:
+        pass
     stop_gateway()
     _wait_for_port_free(_get_port())
     start_gateway()
+    try:
+        icon.icon = create_icon()
+    except Exception:
+        pass
 
 def quit_app(icon, item):
     stop_gateway()
@@ -133,6 +141,19 @@ def quit_app(icon, item):
 
 def create_icon():
     return Image.open(os.path.join(BASE, "static", "icon.png"))
+
+def _add_badge(img):
+    """在原图右上角叠加一个红色圆点（重启中提示）"""
+    try:
+        img = img.copy().convert("RGBA")
+        w, h = img.size
+        r = max(4, min(w, h) // 5)
+        cx, cy = w - r - 1, r + 1
+        draw = ImageDraw.Draw(img)
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="#ef4444")
+        return img
+    except Exception:
+        return img
 
 def main():
     start_gateway()

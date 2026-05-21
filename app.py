@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -66,9 +66,15 @@ def init_db():
             completion_tokens INTEGER NOT NULL DEFAULT 0,
             total_tokens INTEGER NOT NULL DEFAULT 0,
             request_time DATETIME DEFAULT (datetime('now', 'localtime')),
-            endpoint TEXT
+            endpoint TEXT,
+            duration_ms INTEGER DEFAULT 0
         )
     """)
+    # 兼容旧数据库：添加 duration_ms 列
+    try:
+        conn.execute("ALTER TABLE usage_logs ADD COLUMN duration_ms INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
 
@@ -138,16 +144,17 @@ def _extract_content(data: dict) -> str:
         pass
     return ""
 
-def _log_usage(model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint):
+def _log_usage(model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms=0):
     try:
         conn = get_db()
         conn.execute(
-            "INSERT INTO usage_logs (model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint) VALUES (?, ?, ?, ?, ?, ?)",
-            (model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint),
+            "INSERT INTO usage_logs (model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms),
         )
         conn.commit()
         conn.close()
-        print(f"  LOG: {model} | {provider} | +{prompt_tokens}p +{completion_tokens}c = {total_tokens}t")
+        speed = f" {(total_tokens * 1000 // max(duration_ms, 1))}t/s" if duration_ms else ""
+        print(f"  LOG: {model} | {provider} | +{prompt_tokens}p +{completion_tokens}c = {total_tokens}t | {duration_ms}ms{speed}")
     except Exception as e:
         print(f"  LOG FAIL: {e}")
 
@@ -168,6 +175,8 @@ def _handle_stream(target_url, headers, body_data, model, provider_label, prompt
     complete_content = ""
     usage_data = None
     path = request.path
+    start_time = datetime.now()
+    state = {"end_time": None}
 
     def generate():
         nonlocal complete_content, usage_data
@@ -209,6 +218,7 @@ def _handle_stream(target_url, headers, body_data, model, provider_label, prompt
         if buf:
             yield "\n".join(buf) + "\n\n"
         yield "data: [DONE]\n\n"
+        state["end_time"] = datetime.now()
 
     def do_log():
         if usage_data:
@@ -220,7 +230,9 @@ def _handle_stream(target_url, headers, body_data, model, provider_label, prompt
         else:
             pt = prompt_tokens
             ct = count_tokens(model, complete_content)
-        _log_usage(model, provider_label, pt, ct, pt + ct, path)
+        end_time = state.get("end_time") or datetime.now()
+        duration_ms = int((end_time - start_time).total_seconds() * 1000)
+        _log_usage(model, provider_label, pt, ct, pt + ct, path, duration_ms)
 
     response = Response(stream_with_context(generate()), content_type=resp.headers.get("content-type", "text/event-stream"))
     response.call_on_close(do_log)
@@ -259,6 +271,7 @@ def _proxy_passthrough(upstream_url, body, model, stream):
         return _handle_stream(upstream_url, headers, body, model, provider_label, prompt_tokens, raw_body)
 
     print(f"  POST {upstream_url} | model={model} | stream={stream} | body={raw_body[:200].decode('utf-8', errors='replace')}")
+    start_time = datetime.now()
     resp = requests.post(upstream_url, headers=headers, data=raw_body, timeout=300)
     if not resp.ok:
         err = resp.text[:500] if resp.text else "(empty body)"
@@ -271,7 +284,8 @@ def _proxy_passthrough(upstream_url, body, model, stream):
     if usage.get("prompt_tokens"):
         prompt_tokens = usage["prompt_tokens"]
     completion_tokens = usage.get("completion_tokens", 0) or count_tokens(model, _extract_content(data))
-    _log_usage(model, provider_label, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, request.path)
+    duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+    _log_usage(model, provider_label, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, request.path, duration_ms)
     return jsonify(data)
 
 
@@ -365,7 +379,7 @@ def api_usage():
         })
 
     month_rows = conn.execute(
-        "SELECT provider, COUNT(*) as cnt, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens FROM usage_logs WHERE request_time BETWEEN ? AND ? GROUP BY provider",
+        "SELECT provider, COUNT(*) as cnt, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(duration_ms) as duration_ms FROM usage_logs WHERE request_time BETWEEN ? AND ? GROUP BY provider",
         (start, end),
     ).fetchall()
     conn.close()
@@ -373,10 +387,16 @@ def api_usage():
     billing_by_provider = {}
     for row in month_rows:
         prov = row["provider"]
+        total_duration_ms = row["duration_ms"] or 0
+        total_completion = row["completion_tokens"] or 0
+        tokens_per_second = 0
+        if total_duration_ms > 0:
+            tokens_per_second = round(total_completion * 1000 / total_duration_ms, 1)
         billing_by_provider[prov] = {
             "month_used": row["cnt"],
             "prompt_tokens": row["prompt_tokens"] or 0,
             "completion_tokens": row["completion_tokens"] or 0,
+            "tokens_per_second": tokens_per_second,
         }
 
     return jsonify({

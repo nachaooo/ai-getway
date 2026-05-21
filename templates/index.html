@@ -141,7 +141,7 @@ td:last-child, th:last-child { text-align: right; }
         <h2 data-i18n="recentTitle">最近请求</h2>
         <div class="table-scroll">
           <table>
-            <thead><tr><th data-i18n="colTime">时间</th><th data-i18n="colModel">模型</th><th data-i18n="colProvider">平台</th><th data-i18n="colInput">输入</th><th data-i18n="colOutput">输出</th></tr></thead>
+            <thead><tr><th data-i18n="colTime">时间</th><th data-i18n="colModel">模型</th><th data-i18n="colProvider">平台</th><th data-i18n="colInput">输入</th><th data-i18n="colOutput">输出</th><th data-i18n="statSpeed">Token/s</th></tr></thead>
             <tbody id="recentTable"></tbody>
           </table>
         </div>
@@ -161,7 +161,7 @@ const I18N = {
   zh: {
     pageTitle: 'AI Gateway',
     range1h: '1小时', range24h: '24小时', range7d: '7天', range30d: '30天', rangeToday: '今日', rangeYesterday: '昨日',
-    statRequests: '对话次数', statInput: '输入 Token', statOutput: '输出 Token',
+    statRequests: '对话次数', statInput: '输入 Token', statOutput: '输出 Token', statSpeed: 'Token/s',
     trendTitle: '用量趋势', billingTitle: '各平台使用量', recentTitle: '最近请求',
     colTime: '时间', colModel: '模型', colProvider: '平台', colInput: '输入', colOutput: '输出',
     prev: '上一页', next: '下一页', empty: '暂无数据', token: 'Token', requests: '请求数',
@@ -170,7 +170,7 @@ const I18N = {
   en: {
     pageTitle: 'AI Gateway',
     range1h: '1h', range24h: '24h', range7d: '7d', range30d: '30d', rangeToday: 'Today', rangeYesterday: 'Yesterday',
-    statRequests: 'Conversations', statInput: 'Input Tokens', statOutput: 'Output Tokens',
+    statRequests: 'Conversations', statInput: 'Input Tokens', statOutput: 'Output Tokens', statSpeed: 'Token/s',
     trendTitle: 'Usage Trend', billingTitle: 'Provider Usage', recentTitle: 'Recent Requests',
     colTime: 'Time', colModel: 'Model', colProvider: 'Provider', colInput: 'Input', colOutput: 'Output',
     prev: 'Prev', next: 'Next', empty: 'No data', token: 'Token', requests: 'Requests',
@@ -267,7 +267,7 @@ function renderRecent(items) {
   const lang = document.documentElement.getAttribute('data-lang') || 'zh';
   const tb = document.getElementById('recentTable');
   if (items.length === 0) {
-    tb.innerHTML = `<tr><td colspan="5" class="empty">${I18N[lang].empty}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="6" class="empty">${I18N[lang].empty}</td></tr>`;
     document.getElementById('pages').innerHTML = '';
     return;
   }
@@ -276,9 +276,10 @@ function renderRecent(items) {
   if (page < 1) page = 1;
   const theme = document.documentElement.getAttribute('data-theme') || 'dark';
   const modelColor = theme === 'light' ? '#111' : '#ccc';
-  tb.innerHTML = items.map(r =>
-    `<tr><td style="color:var(--muted)">${r.request_time.slice(5,19)}</td><td style="color:${modelColor}">${r.model}</td><td>${r.provider}</td><td>${n(r.prompt_tokens)}</td><td>${n(r.completion_tokens)}</td></tr>`
-  ).join('');
+  tb.innerHTML = items.map(r => {
+    const speed = r.duration_ms > 0 ? (r.completion_tokens * 1000 / r.duration_ms).toFixed(1) : '-';
+    return `<tr><td style="color:var(--muted)">${r.request_time.slice(5,19)}</td><td style="color:${modelColor}">${r.model}</td><td>${r.provider}</td><td>${n(r.prompt_tokens)}</td><td>${n(r.completion_tokens)}</td><td>${speed}</td></tr>`;
+  }).join('');
 
   let ph = '';
   const addBtn = (p, label, isActive = false, disabled = false) => {
@@ -469,13 +470,14 @@ function fetchAll() {
     }
     entries.sort((a, b) => b[1].month_used - a[1].month_used);
     const lang = document.documentElement.getAttribute('data-lang') || 'zh';
-    let html = `<table><thead><tr><th>${I18N[lang].colProvider}</th><th style="text-align:right">${I18N[lang].colInput}</th><th style="text-align:right">${I18N[lang].statRequests}</th><th style="text-align:right">${I18N[lang].statOutput}</th></tr></thead><tbody>`;
+    let html = `<table><thead><tr><th>${I18N[lang].colProvider}</th><th style="text-align:right">${I18N[lang].statRequests}</th><th style="text-align:right">${I18N[lang].statInput}</th><th style="text-align:right">${I18N[lang].statOutput}</th><th style="text-align:right">${I18N[lang].statSpeed}</th></tr></thead><tbody>`;
     for (const [prov, b] of entries) {
       html += `<tr>
         <td style="color:var(--heading)">${prov}</td>
         <td style="text-align:right">${n(b.month_used)}</td>
         <td style="text-align:right">${n(b.prompt_tokens)}</td>
         <td style="text-align:right">${n(b.completion_tokens)}</td>
+        <td style="text-align:right">${b.tokens_per_second > 0 ? b.tokens_per_second.toFixed(1) : '-'}</td>
       </tr>`;
     }
     html += '</tbody></table>';
