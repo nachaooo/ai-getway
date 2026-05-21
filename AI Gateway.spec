@@ -1,12 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
-
+from PyInstaller.utils.hooks import collect_data_files
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('templates', 'templates'), ('static', 'static'), ('tokenizers/deepseek', 'tokenizers/deepseek')],
-    hiddenimports=[],
+    datas=[
+        ('templates', 'templates'),
+        ('static', 'static'),
+        ('tokenizers/deepseek', 'tokenizers/deepseek'),
+    ] + collect_data_files('tiktoken'),
+    hiddenimports=['tiktoken_ext.openai_public'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

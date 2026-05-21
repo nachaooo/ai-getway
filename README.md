@@ -16,7 +16,7 @@
 - **SSE compatible** — Supports both `data:` and `data: ` prefix formats
 - **Stream buffering** — Parses SSE events by `\n\n` delimiter, prevents JSON truncation
 - **Empty message filter** — Auto-filters empty assistant messages (required by Kimi)
-- **Dashboard** — Dark-themed stats + timeline chart + billing + recent requests (500 rows)
+- **Dashboard** — Dark-themed stats + timeline chart + billing + recent requests (500 rows), with period-over-period comparison on stat cards
 - **Tray launcher** — Windows system tray icon with right-click menu (`start.vbs`)
 - **Auto-start** — Toggle from the tray menu (appears in Windows Settings)
 

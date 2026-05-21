@@ -66,6 +66,9 @@ a { color: var(--link); font-size: 12px; text-decoration: none; }
 .stat { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px 18px; flex: 1; }
 .stat .n { font-size: 24px; font-weight: 700; color: var(--heading); }
 .stat .l { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.stat .mom { font-size: 11px; margin-top: 4px; display: none; color: var(--muted); }
+.stat .mom.up { color: #22c55e; }
+.stat .mom.down { color: #ef4444; }
 .section { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
 .section h2 { font-size: 12px; color: var(--muted); font-weight: 500; margin-bottom: 10px; }
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -117,9 +120,9 @@ td:last-child, th:last-child { text-align: right; }
   <div class="kanban-main">
     <div class="kanban-left">
       <div class="stats">
-        <div class="stat"><div class="n" id="totalRequests">-</div><div class="l" data-i18n="statRequests">对话次数</div></div>
-        <div class="stat"><div class="n" id="promptTokens">-</div><div class="l" data-i18n="statInput">输入 Token</div></div>
-        <div class="stat"><div class="n" id="completionTokens">-</div><div class="l" data-i18n="statOutput">输出 Token</div></div>
+        <div class="stat"><div class="n" id="totalRequests">-</div><div class="mom" id="totalRequestsMom"></div><div class="l" data-i18n="statRequests">对话次数</div></div>
+        <div class="stat"><div class="n" id="promptTokens">-</div><div class="mom" id="promptTokensMom"></div><div class="l" data-i18n="statInput">输入 Token</div></div>
+        <div class="stat"><div class="n" id="completionTokens">-</div><div class="mom" id="completionTokensMom"></div><div class="l" data-i18n="statOutput">输出 Token</div></div>
       </div>
 
       <div class="section">
@@ -386,57 +389,98 @@ function renderChart(timeline, groupBy) {
   });
 }
 
+function updateMom(id, current, prev) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (prev === undefined || prev === null) {
+    el.style.display = 'none';
+    return;
+  }
+  if (prev === 0) {
+    if (current === 0) {
+      el.textContent = '—';
+    } else {
+      el.textContent = '+∞';
+    }
+    el.className = 'mom';
+    el.style.display = 'block';
+    return;
+  }
+  const ratio = ((current - prev) / prev) * 100;
+  const sign = ratio > 0 ? '+' : '';
+  el.textContent = `${sign}${ratio.toFixed(1)}%`;
+  el.className = 'mom';
+  el.style.display = 'block';
+}
+
 function fetchAll() {
   const now = new Date();
   const btn = document.querySelector('[data-range].active');
   const range = btn?.dataset?.range || '24h';
-  let s, e;
+  let startDate, endDate;
   if (range === 'today') {
-    s = localISO(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
-    e = localISO(now);
+    startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    endDate = now;
   } else if (range === 'yesterday') {
-    s = localISO(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
-    e = localISO(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+    startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   } else {
     const hours = ({ '1h':1, '24h':24, '7d':168, '30d':720 })[range] || 24;
-    s = localISO(new Date(now - hours * 3600000));
-    e = localISO(now);
+    startDate = new Date(now - hours * 3600000);
+    endDate = now;
   }
+  const s = localISO(startDate);
+  const e = localISO(endDate);
+  const durationMs = endDate - startDate;
   const groupBy = ({ '1h':'minute', '24h':'hour', '7d':'day', '30d':'day', 'today':'hour', 'yesterday':'hour' })[range] || 'hour';
   currentStart = s;
   currentEnd = e;
 
-  fetch('/api/usage?' + new URLSearchParams({ start: s, end: e, group_by: groupBy }))
-    .then(r => r.json()).then(d => {
-      document.getElementById('totalRequests').textContent = n(d.totals.request_count);
-      document.getElementById('promptTokens').textContent = n(d.totals.prompt_tokens);
-      document.getElementById('completionTokens').textContent = n(d.totals.completion_tokens);
-      renderChart(d.timeline, groupBy);
-    });
+  const mainPromise = fetch('/api/usage?' + new URLSearchParams({ start: s, end: e, group_by: groupBy }))
+    .then(r => r.json());
 
-  fetch('/api/usage?' + new URLSearchParams({ start: s, end: e }))
-    .then(r => r.json()).then(d => {
-      const bl = document.getElementById('billingList');
-      const billing = d.billing || {};
-      const entries = Object.entries(billing);
-      if (entries.length === 0) {
-        bl.innerHTML = '<div class="empty">' + (I18N[document.documentElement.getAttribute('data-lang')||'zh'].empty) + '</div>';
-        return;
-      }
-      entries.sort((a, b) => b[1].month_used - a[1].month_used);
-      const lang = document.documentElement.getAttribute('data-lang') || 'zh';
-      let html = `<table><thead><tr><th>${I18N[lang].colProvider}</th><th style="text-align:right">${I18N[lang].colInput}</th><th style="text-align:right">${I18N[lang].statRequests}</th><th style="text-align:right">${I18N[lang].statOutput}</th></tr></thead><tbody>`;
-      for (const [prov, b] of entries) {
-        html += `<tr>
-          <td style="color:var(--heading)">${prov}</td>
-          <td style="text-align:right">${n(b.month_used)}</td>
-          <td style="text-align:right">${n(b.prompt_tokens)}</td>
-          <td style="text-align:right">${n(b.completion_tokens)}</td>
-        </tr>`;
-      }
-      html += '</tbody></table>';
-      bl.innerHTML = html;
-    });
+  let prevStart, prevEnd;
+  if (range === 'today') {
+    prevStart = localISO(new Date(startDate.getTime() - 24 * 3600000));
+    prevEnd = localISO(new Date(endDate.getTime() - 24 * 3600000));
+  } else {
+    prevStart = localISO(new Date(startDate.getTime() - durationMs));
+    prevEnd = localISO(new Date(endDate.getTime() - durationMs));
+  }
+  const prevPromise = fetch('/api/usage?' + new URLSearchParams({ start: prevStart, end: prevEnd }))
+    .then(r => r.json());
+
+  Promise.all([mainPromise, prevPromise]).then(([d, pd]) => {
+    document.getElementById('totalRequests').textContent = n(d.totals.request_count);
+    document.getElementById('promptTokens').textContent = n(d.totals.prompt_tokens);
+    document.getElementById('completionTokens').textContent = n(d.totals.completion_tokens);
+    renderChart(d.timeline, groupBy);
+
+    updateMom('totalRequestsMom', d.totals.request_count, pd.totals.request_count);
+    updateMom('promptTokensMom', d.totals.prompt_tokens, pd.totals.prompt_tokens);
+    updateMom('completionTokensMom', d.totals.completion_tokens, pd.totals.completion_tokens);
+
+    const bl = document.getElementById('billingList');
+    const billing = d.billing || {};
+    const entries = Object.entries(billing);
+    if (entries.length === 0) {
+      bl.innerHTML = '<div class="empty">' + (I18N[document.documentElement.getAttribute('data-lang')||'zh'].empty) + '</div>';
+      return;
+    }
+    entries.sort((a, b) => b[1].month_used - a[1].month_used);
+    const lang = document.documentElement.getAttribute('data-lang') || 'zh';
+    let html = `<table><thead><tr><th>${I18N[lang].colProvider}</th><th style="text-align:right">${I18N[lang].colInput}</th><th style="text-align:right">${I18N[lang].statRequests}</th><th style="text-align:right">${I18N[lang].statOutput}</th></tr></thead><tbody>`;
+    for (const [prov, b] of entries) {
+      html += `<tr>
+        <td style="color:var(--heading)">${prov}</td>
+        <td style="text-align:right">${n(b.month_used)}</td>
+        <td style="text-align:right">${n(b.prompt_tokens)}</td>
+        <td style="text-align:right">${n(b.completion_tokens)}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    bl.innerHTML = html;
+  });
 }
 
 function fetchRecent(p) {
@@ -467,7 +511,7 @@ document.querySelectorAll('[data-range]').forEach(btn => {
 initPrefs();
 fetchAll();
 fetchRecent(1);
-setInterval(() => { fetchAll(); fetchRecent(page); }, {{ refresh_interval }});
+setInterval(() => { fetchAll(); fetchRecent(page); }, 15000);
 </script>
 </body>
 </html>

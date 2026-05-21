@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context
 
+VERSION = "0.4.0"
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # PyInstaller 支持：exe 所在目录为可写目录，sys._MEIPASS 为打包资源目录
@@ -36,7 +38,14 @@ app = Flask(
 )
 
 PORT = int(_cfg("port", "PORT", 5000))
-DB_PATH = _cfg("db_path", "DB_PATH", os.path.join(EXE_DIR, "usage.db"))
+
+# 统一数据目录：无论通过 vbs 还是 exe 启动，默认都用同一个位置
+DATA_DIR = os.path.join(os.path.expandvars("%APPDATA%"), "AI Gateway")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+_db_path = _cfg("db_path", "DB_PATH", os.path.join(DATA_DIR, "usage.db"))
+# 兼容 config.json 中可能存在的相对路径：基于 EXE_DIR 解析为绝对路径
+DB_PATH = os.path.join(EXE_DIR, _db_path) if not os.path.isabs(_db_path) else _db_path
 
 # ── database ──────────────────────────────────────────────────
 
@@ -415,8 +424,7 @@ def api_recent():
 
 @app.route("/")
 def dashboard():
-    refresh_interval = int(_cfg("refresh_interval", "REFRESH_INTERVAL", 15)) * 1000
-    return render_template("index.html", refresh_interval=refresh_interval)
+    return render_template("index.html")
 
 
 init_db()
