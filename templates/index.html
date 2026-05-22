@@ -92,6 +92,7 @@ td:last-child, th:last-child { text-align: right; }
 [data-layout="kanban"] .kanban-right .section { margin-bottom: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 [data-layout="kanban"] .chart-wrap { flex-shrink: 0; }
 [data-layout="kanban"] #billingList { flex: 1; overflow-y: auto; min-height: 0; }
+[data-layout="kanban"] #modelUsageList { flex: 1; overflow-y: auto; min-height: 0; }
 [data-layout="kanban"] .table-scroll { flex: 1; overflow-y: auto; min-height: 0; }
 [data-layout="kanban"] .pages { flex-shrink: 0; margin-top: 8px; }
 [data-layout="kanban"] h2 { flex-shrink: 0; }
@@ -134,6 +135,11 @@ td:last-child, th:last-child { text-align: right; }
         <h2 data-i18n="billingTitle">各平台使用量</h2>
         <div id="billingList"></div>
       </div>
+
+      <div class="section">
+        <h2 data-i18n="modelUsageTitle">各模型使用量</h2>
+        <div id="modelUsageList"></div>
+      </div>
     </div>
 
     <div class="kanban-right">
@@ -162,7 +168,7 @@ const I18N = {
     pageTitle: 'AI Gateway',
     range1h: '1小时', range24h: '24小时', range7d: '7天', range30d: '30天', rangeToday: '今日', rangeYesterday: '昨日',
     statRequests: '对话次数', statInput: '输入 Token', statOutput: '输出 Token', statSpeed: 'Token/s',
-    trendTitle: '用量趋势', billingTitle: '各平台使用量', recentTitle: '最近请求',
+    trendTitle: '用量趋势', billingTitle: '各平台使用量', modelUsageTitle: '各模型使用量', recentTitle: '最近请求',
     colTime: '时间', colModel: '模型', colProvider: '平台', colInput: '输入', colOutput: '输出',
     prev: '上一页', next: '下一页', empty: '暂无数据', token: 'Token', requests: '请求数',
     layoutDefault: '默认', layoutKanban: '看板',
@@ -171,7 +177,7 @@ const I18N = {
     pageTitle: 'AI Gateway',
     range1h: '1h', range24h: '24h', range7d: '7d', range30d: '30d', rangeToday: 'Today', rangeYesterday: 'Yesterday',
     statRequests: 'Conversations', statInput: 'Input Tokens', statOutput: 'Output Tokens', statSpeed: 'Token/s',
-    trendTitle: 'Usage Trend', billingTitle: 'Provider Usage', recentTitle: 'Recent Requests',
+    trendTitle: 'Usage Trend', billingTitle: 'Provider Usage', modelUsageTitle: 'Model Usage', recentTitle: 'Recent Requests',
     colTime: 'Time', colModel: 'Model', colProvider: 'Provider', colInput: 'Input', colOutput: 'Output',
     prev: 'Prev', next: 'Next', empty: 'No data', token: 'Token', requests: 'Requests',
     layoutDefault: 'Default', layoutKanban: 'Kanban',
@@ -464,24 +470,45 @@ function fetchAll() {
     const bl = document.getElementById('billingList');
     const billing = d.billing || {};
     const entries = Object.entries(billing);
-    if (entries.length === 0) {
-      bl.innerHTML = '<div class="empty">' + (I18N[document.documentElement.getAttribute('data-lang')||'zh'].empty) + '</div>';
-      return;
-    }
-    entries.sort((a, b) => b[1].month_used - a[1].month_used);
     const lang = document.documentElement.getAttribute('data-lang') || 'zh';
-    let html = `<table><thead><tr><th>${I18N[lang].colProvider}</th><th style="text-align:right">${I18N[lang].statRequests}</th><th style="text-align:right">${I18N[lang].statInput}</th><th style="text-align:right">${I18N[lang].statOutput}</th><th style="text-align:right">${I18N[lang].statSpeed}</th></tr></thead><tbody>`;
-    for (const [prov, b] of entries) {
-      html += `<tr>
-        <td style="color:var(--heading)">${prov}</td>
-        <td style="text-align:right">${n(b.month_used)}</td>
-        <td style="text-align:right">${n(b.prompt_tokens)}</td>
-        <td style="text-align:right">${n(b.completion_tokens)}</td>
-        <td style="text-align:right">${b.tokens_per_second > 0 ? b.tokens_per_second.toFixed(1) : '-'}</td>
-      </tr>`;
+    if (entries.length === 0) {
+      bl.innerHTML = '<div class="empty">' + (I18N[lang].empty) + '</div>';
+    } else {
+      entries.sort((a, b) => b[1].month_used - a[1].month_used);
+      let html = `<table><thead><tr><th>${I18N[lang].colProvider}</th><th style="text-align:right">${I18N[lang].statRequests}</th><th style="text-align:right">${I18N[lang].statInput}</th><th style="text-align:right">${I18N[lang].statOutput}</th><th style="text-align:right">${I18N[lang].statSpeed}</th></tr></thead><tbody>`;
+      for (const [prov, b] of entries) {
+        html += `<tr>
+          <td style="color:var(--heading)">${prov}</td>
+          <td style="text-align:right">${n(b.month_used)}</td>
+          <td style="text-align:right">${n(b.prompt_tokens)}</td>
+          <td style="text-align:right">${n(b.completion_tokens)}</td>
+          <td style="text-align:right">${b.tokens_per_second > 0 ? b.tokens_per_second.toFixed(1) : '-'}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+      bl.innerHTML = html;
     }
-    html += '</tbody></table>';
-    bl.innerHTML = html;
+
+    const ml = document.getElementById('modelUsageList');
+    const billingModel = d.billing_model || {};
+    const modelEntries = Object.entries(billingModel);
+    if (modelEntries.length === 0) {
+      ml.innerHTML = '<div class="empty">' + (I18N[lang].empty) + '</div>';
+    } else {
+      modelEntries.sort((a, b) => b[1].month_used - a[1].month_used);
+      let mhtml = `<table><thead><tr><th>${I18N[lang].colModel}</th><th style="text-align:right">${I18N[lang].statRequests}</th><th style="text-align:right">${I18N[lang].statInput}</th><th style="text-align:right">${I18N[lang].statOutput}</th><th style="text-align:right">${I18N[lang].statSpeed}</th></tr></thead><tbody>`;
+      for (const [mdl, b] of modelEntries) {
+        mhtml += `<tr>
+          <td style="color:var(--heading)">${mdl}</td>
+          <td style="text-align:right">${n(b.month_used)}</td>
+          <td style="text-align:right">${n(b.prompt_tokens)}</td>
+          <td style="text-align:right">${n(b.completion_tokens)}</td>
+          <td style="text-align:right">${b.tokens_per_second > 0 ? b.tokens_per_second.toFixed(1) : '-'}</td>
+        </tr>`;
+      }
+      mhtml += '</tbody></table>';
+      ml.innerHTML = mhtml;
+    }
   });
 }
 

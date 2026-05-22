@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -382,6 +382,11 @@ def api_usage():
         "SELECT provider, COUNT(*) as cnt, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(duration_ms) as duration_ms FROM usage_logs WHERE request_time BETWEEN ? AND ? GROUP BY provider",
         (start, end),
     ).fetchall()
+
+    model_rows = conn.execute(
+        "SELECT model, COUNT(*) as cnt, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(duration_ms) as duration_ms FROM usage_logs WHERE request_time BETWEEN ? AND ? GROUP BY model",
+        (start, end),
+    ).fetchall()
     conn.close()
 
     billing_by_provider = {}
@@ -399,12 +404,28 @@ def api_usage():
             "tokens_per_second": tokens_per_second,
         }
 
+    billing_by_model = {}
+    for row in model_rows:
+        mdl = row["model"]
+        total_duration_ms = row["duration_ms"] or 0
+        total_completion = row["completion_tokens"] or 0
+        tokens_per_second = 0
+        if total_duration_ms > 0:
+            tokens_per_second = round(total_completion * 1000 / total_duration_ms, 1)
+        billing_by_model[mdl] = {
+            "month_used": row["cnt"],
+            "prompt_tokens": row["prompt_tokens"] or 0,
+            "completion_tokens": row["completion_tokens"] or 0,
+            "tokens_per_second": tokens_per_second,
+        }
+
     return jsonify({
         "totals": totals,
         "by_model": by_model,
         "timeline": timeline,
         "period": {"start": start, "end": end},
         "billing": billing_by_provider,
+        "billing_model": billing_by_model,
     })
 
 
