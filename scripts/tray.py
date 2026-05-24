@@ -155,10 +155,20 @@ def _add_badge(img):
     except Exception:
         return img
 
+class _TrayIcon(pystray.Icon):
+    """左键点击直接打开看板，右键弹出菜单"""
+    def __call__(self):
+        action = getattr(self, '_left_click_action', None)
+        if action:
+            action()
+        elif self._menu is not None:
+            self._menu(self)
+            self.update_menu()
+
 def main():
     start_gateway()
     time.sleep(2)
-    icon = pystray.Icon(
+    icon = _TrayIcon(
         "ai_gateway", create_icon(), "AI Gateway",
         menu=pystray.Menu(
             pystray.MenuItem("打开看板", open_dashboard),
@@ -167,6 +177,7 @@ def main():
             pystray.MenuItem("退出", quit_app),
         )
     )
+    icon._left_click_action = lambda: open_dashboard(icon, None)
     icon.run()
 
 if __name__ == "__main__":

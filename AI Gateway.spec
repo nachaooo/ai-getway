@@ -1,5 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
+import re
 from PyInstaller.utils.hooks import collect_data_files
+
+_with_version = re.search(r'VERSION = "([^"]+)"', open('app.py', encoding='utf-8').read())
+_VERSION = _with_version.group(1) if _with_version else "0.0.0"
 
 a = Analysis(
     ['main.py'],
@@ -34,7 +38,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='AI Gateway',
+    name=f'AI Gateway v{_VERSION}',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
