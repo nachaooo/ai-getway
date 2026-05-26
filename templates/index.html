@@ -80,6 +80,13 @@ td:last-child, th:last-child { text-align: right; }
 .pages button { background: var(--btn-bg); border: 1px solid var(--btn-border); color: var(--btn-fg); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
 .pages button.active { background: var(--btn-active-bg); border-color: var(--btn-active-border); color: var(--btn-active-fg); }
 .section .chart-wrap { height: 160px; position: relative; }
+.config-dropdown { position: relative; display: inline-block; }
+.dropdown-content { display: none; position: absolute; right: 0; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; padding: 8px 0; min-width: 140px; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+.dropdown-content.show { display: block; }
+.dropdown-item { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; font-size: 12px; color: var(--fg); white-space: nowrap; }
+.dropdown-item:hover { background: var(--btn-bg); }
+.dropdown-item input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--btn-active-bg); }
+.config-dropdown > button { background: var(--btn-bg); border: 1px solid var(--btn-border); color: var(--btn-fg); padding: 4px 10px; border-radius: 5px; cursor: pointer; font-size: 11px; line-height: 1; }
 [data-layout="kanban"] body { height: 100vh; overflow: hidden; padding: 12px; }
 [data-layout="kanban"] .container { max-width: 1200px; height: 100%; display: flex; flex-direction: column; gap: 10px; }
 [data-layout="kanban"] .header,
@@ -103,6 +110,35 @@ td:last-child, th:last-child { text-align: right; }
   <div class="header">
     <h1 id="pageTitle">AI Gateway</h1>
     <div class="toolbar">
+      <div class="config-dropdown">
+        <button id="configBtn" onclick="toggleConfigMenu()">⚙</button>
+        <div id="configMenu" class="dropdown-content">
+          <label class="dropdown-item">
+            <input type="checkbox" data-section="stats" checked onchange="toggleSection('stats')">
+            <span data-i18n="configStats">统计数据</span>
+          </label>
+          <label class="dropdown-item">
+            <input type="checkbox" data-section="trendChart" checked onchange="toggleSection('trendChart')">
+            <span data-i18n="configTrend">用量趋势</span>
+          </label>
+          <label class="dropdown-item">
+            <input type="checkbox" data-section="modelsTrendChart" checked onchange="toggleSection('modelsTrendChart')">
+            <span data-i18n="configModelsTrend">模型趋势</span>
+          </label>
+          <label class="dropdown-item">
+            <input type="checkbox" data-section="billing" checked onchange="toggleSection('billing')">
+            <span data-i18n="configBilling">平台使用量</span>
+          </label>
+          <label class="dropdown-item">
+            <input type="checkbox" data-section="modelUsage" checked onchange="toggleSection('modelUsage')">
+            <span data-i18n="configModelUsage">模型使用量</span>
+          </label>
+          <label class="dropdown-item">
+            <input type="checkbox" data-section="recent" checked onchange="toggleSection('recent')">
+            <span data-i18n="configRecent">最近请求</span>
+          </label>
+        </div>
+      </div>
       <button id="layoutBtn" onclick="toggleLayout()">看板</button>
       <button id="themeBtn" onclick="toggleTheme()">Light</button>
       <button id="langBtn" onclick="toggleLang()">EN</button>
@@ -177,6 +213,8 @@ const I18N = {
     colTime: '时间', colModel: '模型', colProvider: '平台', colInput: '输入', colOutput: '输出',
     prev: '上一页', next: '下一页', empty: '暂无数据', token: 'Token', requests: '请求数',
     layoutDefault: '默认', layoutKanban: '看板',
+    configStats: '统计数据', configTrend: '用量趋势', configModelsTrend: '模型趋势',
+    configBilling: '平台使用量', configModelUsage: '模型使用量', configRecent: '最近请求',
   },
   en: {
     pageTitle: 'AI Gateway',
@@ -186,6 +224,8 @@ const I18N = {
     colTime: 'Time', colModel: 'Model', colProvider: 'Provider', colInput: 'Input', colOutput: 'Output',
     prev: 'Prev', next: 'Next', empty: 'No data', token: 'Token', requests: 'Requests',
     layoutDefault: 'Default', layoutKanban: 'Kanban',
+    configStats: 'Statistics', configTrend: 'Usage Trend', configModelsTrend: 'Models Trend',
+    configBilling: 'Provider Usage', configModelUsage: 'Model Usage', configRecent: 'Recent Requests',
   }
 };
 
@@ -243,6 +283,7 @@ function initPrefs() {
   const savedLang = localStorage.getItem('ag_lang');
   const savedRange = localStorage.getItem('ag_range');
   const savedLayout = localStorage.getItem('ag_layout');
+  const savedSections = JSON.parse(localStorage.getItem('ag_sections') || '{}');
   if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
   if (savedLang) document.documentElement.setAttribute('data-lang', savedLang);
   if (savedRange) {
@@ -254,7 +295,67 @@ function initPrefs() {
   applyTheme();
   applyLang();
   applyLayout();
+  applySectionVisibility(savedSections);
 }
+
+function toggleConfigMenu() {
+  const menu = document.getElementById('configMenu');
+  menu.classList.toggle('show');
+}
+
+function toggleSection(section) {
+  const checkbox = document.querySelector(`[data-section="${section}"]`);
+  const isVisible = checkbox.checked;
+  const sections = JSON.parse(localStorage.getItem('ag_sections') || '{}');
+  sections[section] = isVisible;
+  localStorage.setItem('ag_sections', JSON.stringify(sections));
+  applySectionVisibility(sections);
+}
+
+function applySectionVisibility(sections) {
+  const defaultVisibility = {
+    stats: true, trendChart: true, modelsTrendChart: true,
+    billing: true, modelUsage: true, recent: true
+  };
+  const visibility = { ...defaultVisibility, ...sections };
+  
+  Object.entries(visibility).forEach(([section, isVisible]) => {
+    const checkbox = document.querySelector(`[data-section="${section}"]`);
+    if (checkbox) checkbox.checked = isVisible;
+    
+    let element;
+    switch(section) {
+      case 'stats':
+        element = document.querySelector('.stats');
+        break;
+      case 'trendChart':
+        element = document.querySelector('.section:has(#trendChart)');
+        break;
+      case 'modelsTrendChart':
+        element = document.querySelector('.section:has(#modelsTrendChart)');
+        break;
+      case 'billing':
+        element = document.querySelector('.section:has(#billingList)');
+        break;
+      case 'modelUsage':
+        element = document.querySelector('.section:has(#modelUsageList)');
+        break;
+      case 'recent':
+        element = document.querySelector('.kanban-right .section');
+        break;
+    }
+    if (element) {
+      element.style.display = isVisible ? '' : 'none';
+    }
+  });
+}
+
+document.addEventListener('click', (e) => {
+  const dropdown = document.querySelector('.config-dropdown');
+  if (!dropdown.contains(e.target)) {
+    document.getElementById('configMenu').classList.remove('show');
+  }
+});
 
 function chartColors() {
   const theme = document.documentElement.getAttribute('data-theme') || 'dark';
@@ -438,21 +539,36 @@ function renderModelsChart(timeline, groupBy) {
   });
 
   const palette = [
-    '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
-    '#ec4899', '#06b6d4', '#f97316', '#14b8a6', '#6366f1',
+    '#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f97316',
+    '#f59e0b', '#eab308', '#22c55e', '#14b8a6', '#06b6d4',
+    '#3b82f6', '#0ea5e9',
   ];
 
-  const datasets = models.map((model, i) => ({
-    label: model,
-    data: periods.map(p => modelData[model][p] || 0),
-    borderColor: palette[i % palette.length],
-    backgroundColor: 'transparent',
-    pointRadius: 0,
-    pointHoverRadius: 4,
-    pointHitRadius: 20,
-    tension: .2,
-    borderWidth: 1.5,
-  }));
+  const ctx = document.getElementById('modelsTrendChart').getContext('2d');
+  const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+
+  const datasets = models.map((model, i) => {
+    const color = palette[i % palette.length];
+    const gradient = ctx.createLinearGradient(0, 0, 0, 160);
+    gradient.addColorStop(0, theme === 'dark' ? color + '40' : color + '30');
+    gradient.addColorStop(1, theme === 'dark' ? color + '00' : color + '05');
+
+    return {
+      label: model,
+      data: periods.map(p => modelData[model][p] || 0),
+      borderColor: color,
+      backgroundColor: gradient,
+      pointRadius: 0,
+      pointHoverRadius: 6,
+      pointHoverBackgroundColor: color,
+      pointHoverBorderColor: theme === 'dark' ? '#fff' : '#000',
+      pointHoverBorderWidth: 2,
+      pointHitRadius: 20,
+      tension: 0.4,
+      borderWidth: 2.5,
+      fill: true,
+    };
+  });
 
   const c = chartColors();
   const lang = document.documentElement.getAttribute('data-lang') || 'zh';
@@ -473,7 +589,6 @@ function renderModelsChart(timeline, groupBy) {
     return;
   }
 
-  const ctx = document.getElementById('modelsTrendChart').getContext('2d');
   window._modelsChart = new Chart(ctx, {
     type: 'line',
     data: { labels, datasets },
@@ -481,19 +596,47 @@ function renderModelsChart(timeline, groupBy) {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { labels: { color: c.legend, boxWidth: 10, padding: 8, font: { size: 10 } } },
+        legend: {
+          position: 'top',
+          align: 'start',
+          labels: {
+            color: c.legend,
+            boxWidth: 12,
+            padding: 12,
+            font: { size: 11, weight: '500' },
+            usePointStyle: true,
+            pointStyle: 'circle',
+          }
+        },
         tooltip: {
-          backgroundColor: c.tooltipBg, titleColor: c.tooltipTitle, bodyColor: c.tooltipBody,
-          borderColor: c.tooltipBorder, borderWidth: 1, cornerRadius: 6,
-          padding: 10, titleFont: { size: 11 }, bodyFont: { size: 11 },
+          backgroundColor: c.tooltipBg,
+          titleColor: c.tooltipTitle,
+          bodyColor: c.tooltipBody,
+          borderColor: c.tooltipBorder,
+          borderWidth: 1,
+          cornerRadius: 8,
+          padding: 12,
+          titleFont: { size: 12, weight: '600' },
+          bodyFont: { size: 11 },
+          displayColors: true,
+          boxWidth: 8,
+          boxHeight: 8,
+          boxPadding: 4,
           callbacks: {
             label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`
           }
         }
       },
       scales: {
-        x: { ticks: { color: c.tick, font: { size: 9 }, maxTicksLimit: 12 }, grid: { color: c.grid } },
-        y: { ticks: { color: c.tick, font: { size: 9 } }, grid: { color: c.grid }, beginAtZero: true },
+        x: {
+          ticks: { color: c.tick, font: { size: 10 }, maxTicksLimit: 12 },
+          grid: { color: c.grid, drawBorder: false }
+        },
+        y: {
+          ticks: { color: c.tick, font: { size: 10 } },
+          grid: { color: c.grid, drawBorder: false },
+          beginAtZero: true
+        },
       }
     }
   });
