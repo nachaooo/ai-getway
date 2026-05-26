@@ -132,6 +132,11 @@ td:last-child, th:last-child { text-align: right; }
       </div>
 
       <div class="section">
+        <h2 data-i18n="modelsTrendTitle">模型趋势</h2>
+        <div class="chart-wrap"><canvas id="modelsTrendChart"></canvas></div>
+      </div>
+
+      <div class="section">
         <h2 data-i18n="billingTitle">各平台使用量</h2>
         <div id="billingList"></div>
       </div>
@@ -168,7 +173,7 @@ const I18N = {
     pageTitle: 'AI Gateway',
     range1h: '1小时', range24h: '24小时', range7d: '7天', range30d: '30天', rangeToday: '今日', rangeYesterday: '昨日',
     statRequests: '对话次数', statInput: '输入 Token', statOutput: '输出 Token', statSpeed: 'Token/s',
-    trendTitle: '用量趋势', billingTitle: '各平台使用量', modelUsageTitle: '各模型使用量', recentTitle: '最近请求',
+    trendTitle: '用量趋势', modelsTrendTitle: '模型趋势', billingTitle: '各平台使用量', modelUsageTitle: '各模型使用量', recentTitle: '最近请求',
     colTime: '时间', colModel: '模型', colProvider: '平台', colInput: '输入', colOutput: '输出',
     prev: '上一页', next: '下一页', empty: '暂无数据', token: 'Token', requests: '请求数',
     layoutDefault: '默认', layoutKanban: '看板',
@@ -177,7 +182,7 @@ const I18N = {
     pageTitle: 'AI Gateway',
     range1h: '1h', range24h: '24h', range7d: '7d', range30d: '30d', rangeToday: 'Today', rangeYesterday: 'Yesterday',
     statRequests: 'Conversations', statInput: 'Input Tokens', statOutput: 'Output Tokens', statSpeed: 'Token/s',
-    trendTitle: 'Usage Trend', billingTitle: 'Provider Usage', modelUsageTitle: 'Model Usage', recentTitle: 'Recent Requests',
+    trendTitle: 'Usage Trend', modelsTrendTitle: 'Models Trend', billingTitle: 'Provider Usage', modelUsageTitle: 'Model Usage', recentTitle: 'Recent Requests',
     colTime: 'Time', colModel: 'Model', colProvider: 'Provider', colInput: 'Input', colOutput: 'Output',
     prev: 'Prev', next: 'Next', empty: 'No data', token: 'Token', requests: 'Requests',
     layoutDefault: 'Default', layoutKanban: 'Kanban',
@@ -396,6 +401,104 @@ function renderChart(timeline, groupBy) {
   });
 }
 
+function renderModelsChart(timeline, groupBy) {
+  const modelData = {};
+  for (const t of timeline) {
+    if (!modelData[t.model]) {
+      modelData[t.model] = {};
+    }
+    if (!modelData[t.model][t.period]) {
+      modelData[t.model][t.period] = 0;
+    }
+    modelData[t.model][t.period] += t.total_tokens;
+  }
+
+  const allPeriods = new Set();
+  for (const model of Object.keys(modelData)) {
+    for (const period of Object.keys(modelData[model])) {
+      allPeriods.add(period);
+    }
+  }
+  const periods = Array.from(allPeriods).sort();
+
+  let labelFn;
+  if (groupBy === 'minute') {
+    labelFn = p => p.slice(11, 16);
+  } else if (groupBy === 'day') {
+    labelFn = p => p.slice(5, 10);
+  } else {
+    labelFn = p => p.slice(5, 16);
+  }
+  const labels = periods.map(labelFn);
+
+  const models = Object.keys(modelData).sort((a, b) => {
+    const sumA = Object.values(modelData[a]).reduce((s, v) => s + v, 0);
+    const sumB = Object.values(modelData[b]).reduce((s, v) => s + v, 0);
+    return sumB - sumA;
+  });
+
+  const palette = [
+    '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
+    '#ec4899', '#06b6d4', '#f97316', '#14b8a6', '#6366f1',
+  ];
+
+  const datasets = models.map((model, i) => ({
+    label: model,
+    data: periods.map(p => modelData[model][p] || 0),
+    borderColor: palette[i % palette.length],
+    backgroundColor: 'transparent',
+    pointRadius: 0,
+    pointHoverRadius: 4,
+    pointHitRadius: 20,
+    tension: .2,
+    borderWidth: 1.5,
+  }));
+
+  const c = chartColors();
+  const lang = document.documentElement.getAttribute('data-lang') || 'zh';
+
+  if (window._modelsChart) {
+    window._modelsChart.data.labels = labels;
+    window._modelsChart.data.datasets = datasets;
+    window._modelsChart.options.plugins.legend.labels.color = c.legend;
+    window._modelsChart.options.plugins.tooltip.backgroundColor = c.tooltipBg;
+    window._modelsChart.options.plugins.tooltip.titleColor = c.tooltipTitle;
+    window._modelsChart.options.plugins.tooltip.bodyColor = c.tooltipBody;
+    window._modelsChart.options.plugins.tooltip.borderColor = c.tooltipBorder;
+    window._modelsChart.options.scales.x.ticks.color = c.tick;
+    window._modelsChart.options.scales.x.grid.color = c.grid;
+    window._modelsChart.options.scales.y.ticks.color = c.tick;
+    window._modelsChart.options.scales.y.grid.color = c.grid;
+    window._modelsChart.update('none');
+    return;
+  }
+
+  const ctx = document.getElementById('modelsTrendChart').getContext('2d');
+  window._modelsChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: c.legend, boxWidth: 10, padding: 8, font: { size: 10 } } },
+        tooltip: {
+          backgroundColor: c.tooltipBg, titleColor: c.tooltipTitle, bodyColor: c.tooltipBody,
+          borderColor: c.tooltipBorder, borderWidth: 1, cornerRadius: 6,
+          padding: 10, titleFont: { size: 11 }, bodyFont: { size: 11 },
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: c.tick, font: { size: 9 }, maxTicksLimit: 12 }, grid: { color: c.grid } },
+        y: { ticks: { color: c.tick, font: { size: 9 } }, grid: { color: c.grid }, beginAtZero: true },
+      }
+    }
+  });
+}
+
 function updateMom(id, current, prev) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -462,6 +565,7 @@ function fetchAll() {
     document.getElementById('promptTokens').textContent = n(d.totals.prompt_tokens);
     document.getElementById('completionTokens').textContent = n(d.totals.completion_tokens);
     renderChart(d.timeline, groupBy);
+    renderModelsChart(d.timeline, groupBy);
 
     updateMom('totalRequestsMom', d.totals.request_count, pd.totals.request_count);
     updateMom('promptTokensMom', d.totals.prompt_tokens, pd.totals.prompt_tokens);
