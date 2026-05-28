@@ -357,6 +357,14 @@ document.addEventListener('click', (e) => {
   }
 });
 
+const WEEKDAYS_ZH = ['日', '一', '二', '三', '四', '五', '六'];
+const WEEKDAYS_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+function weekdayLabel(p) {
+  const lang = document.documentElement.getAttribute('data-lang') || 'zh';
+  const d = new Date(p.slice(0, 10) + 'T00:00:00');
+  return lang === 'zh' ? WEEKDAYS_ZH[d.getDay()] : WEEKDAYS_EN[d.getDay()];
+}
+
 function chartColors() {
   const theme = document.documentElement.getAttribute('data-theme') || 'dark';
   if (theme === 'light') {
@@ -439,9 +447,9 @@ function renderChart(timeline, groupBy) {
   if (groupBy === 'minute') {
     labelFn = p => p.slice(11, 16);
   } else if (groupBy === 'day') {
-    labelFn = p => p.slice(5, 10);
+    labelFn = p => p.slice(5, 10) + '(' + weekdayLabel(p) + ')';
   } else {
-    labelFn = p => p.slice(5, 16);
+    labelFn = p => p.slice(5, 16) + '(' + weekdayLabel(p) + ')';
   }
   const labels = periods.map(labelFn);
   const tokens = periods.map(p => merged[p].total_tokens);
@@ -526,9 +534,9 @@ function renderModelsChart(timeline, groupBy) {
   if (groupBy === 'minute') {
     labelFn = p => p.slice(11, 16);
   } else if (groupBy === 'day') {
-    labelFn = p => p.slice(5, 10);
+    labelFn = p => p.slice(5, 10) + '(' + weekdayLabel(p) + ')';
   } else {
-    labelFn = p => p.slice(5, 16);
+    labelFn = p => p.slice(5, 16) + '(' + weekdayLabel(p) + ')';
   }
   const labels = periods.map(labelFn);
 
