@@ -106,6 +106,20 @@ td:last-child, th:last-child { text-align: right; }
 [data-layout="kanban"] .table-scroll { flex: 1; overflow-y: auto; min-height: 0; }
 [data-layout="kanban"] .pages { flex-shrink: 0; margin-top: 8px; }
 [data-layout="kanban"] h2 { flex-shrink: 0; }
+
+/* 模态框样式 */
+.modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+.modal-content { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px; width: 90%; max-width: 700px; max-height: 80vh; display: flex; flex-direction: column; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--card-border); }
+.modal-header h3 { font-size: 15px; color: var(--heading); margin: 0; }
+.modal-close { background: none; border: none; color: var(--muted); font-size: 24px; cursor: pointer; padding: 0; line-height: 1; }
+.modal-close:hover { color: var(--fg); }
+.modal-body { padding: 20px; overflow-y: auto; flex: 1; }
+.modal-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--card-border); display: flex; gap: 8px; flex-wrap: wrap; }
+.modal-form input { flex: 1; min-width: 150px; background: var(--btn-bg); border: 1px solid var(--btn-border); color: var(--fg); padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+.modal-form input:focus { outline: none; border-color: var(--btn-active-border); }
+.modal-form button { background: var(--btn-active-bg); border: 1px solid var(--btn-active-border); color: var(--btn-active-fg); padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+.modal-form button:hover { opacity: 0.9; }
 </style>
 </head>
 <body>
@@ -145,6 +159,7 @@ td:last-child, th:last-child { text-align: right; }
       <button id="layoutBtn" onclick="toggleLayout()">看板</button>
       <button id="themeBtn" onclick="toggleTheme()">Light</button>
       <button id="langBtn" onclick="toggleLang()">EN</button>
+      <button id="modelsBtn" onclick="openModelsModal()" style="background:var(--btn-active-bg); border:1px solid var(--btn-active-border); color:var(--btn-active-fg);">Models</button>
     </div>
   </div>
 
@@ -200,18 +215,24 @@ td:last-child, th:last-child { text-align: right; }
         </div>
         <div class="pages" id="pages"></div>
       </div>
-      
-      <div class="section" id="modelConfigSection" style="display:none;">
-        <h2>模型配置 <span id="currentScopeLabel" style="color:var(--btn-active-bg);"></span></h2>
-        <div id="modelConfigList"></div>
-        <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--card-border);">
-          <div style="display:flex; gap:6px; flex-wrap:wrap;">
-            <input type="text" id="newModelName" placeholder="模型名称" style="flex:1; min-width:120px; background:var(--btn-bg); border:1px solid var(--btn-border); color:var(--fg); padding:6px 10px; border-radius:5px; font-size:12px;">
-            <input type="text" id="newModelApiBase" placeholder="API Base URL" style="flex:2; min-width:180px; background:var(--btn-bg); border:1px solid var(--btn-border); color:var(--fg); padding:6px 10px; border-radius:5px; font-size:12px;">
-            <input type="password" id="newModelApiKey" placeholder="API Key (可选)" style="flex:1; min-width:120px; background:var(--btn-bg); border:1px solid var(--btn-border); color:var(--fg); padding:6px 10px; border-radius:5px; font-size:12px;">
-            <button onclick="addModel()" style="background:var(--btn-active-bg); border:1px solid var(--btn-active-border); color:var(--btn-active-fg); padding:6px 14px; border-radius:5px; cursor:pointer; font-size:12px;">添加</button>
-          </div>
-        </div>
+    </div>
+  </div>
+</div>
+
+<!-- 模型配置模态框 -->
+<div id="modelsModal" class="modal" style="display:none;">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>模型配置 <span id="modalScopeLabel" style="color:var(--btn-active-bg); font-weight:normal;"></span></h3>
+      <button onclick="closeModelsModal()" class="modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="modalModelList"></div>
+      <div class="modal-form">
+        <input type="text" id="modalModelName" placeholder="模型名称">
+        <input type="text" id="modalModelApiBase" placeholder="API Base URL">
+        <input type="password" id="modalModelApiKey" placeholder="API Key (可选)">
+        <button onclick="addModelFromModal()">添加</button>
       </div>
     </div>
   </div>
@@ -843,42 +864,45 @@ document.getElementById('scopeSelect')?.addEventListener('change', () => {
     window.history.pushState({}, '', '/');
   }
   page = 1;
-  loadScopeModels(scope);
   fetchAll();
   fetchRecent(1);
 });
 
-// 模型配置相关函数
-function loadScopeModels(scope) {
-  const section = document.getElementById('modelConfigSection');
-  const label = document.getElementById('currentScopeLabel');
-  const list = document.getElementById('modelConfigList');
-  
+// 模态框相关函数
+function openModelsModal() {
+  const scope = document.getElementById('scopeSelect').value || window.location.pathname.replace(/^\/+|\/+$/g, '');
   if (!scope) {
-    section.style.display = 'none';
+    alert('请先选择一个命名空间');
     return;
   }
-  
-  section.style.display = 'block';
-  label.textContent = '(' + scope + ')';
+  document.getElementById('modelsModal').style.display = 'flex';
+  document.getElementById('modalScopeLabel').textContent = '(' + scope + ')';
+  loadModalModels(scope);
+}
+
+function closeModelsModal() {
+  document.getElementById('modelsModal').style.display = 'none';
+}
+
+function loadModalModels(scope) {
+  const list = document.getElementById('modalModelList');
   
   fetch('/api/scope/' + encodeURIComponent(scope) + '/models')
     .then(r => r.json())
     .then(d => {
       if (d.models.length === 0) {
-        list.innerHTML = '<div class="empty">暂无模型配置</div>';
+        list.innerHTML = '<div class="empty">暂无模型配置，请添加模型</div>';
         return;
       }
       
       let html = '<table><thead><tr><th>模型</th><th>API Base</th><th>默认</th><th>操作</th></tr></thead><tbody>';
       d.models.forEach(m => {
         const isDefault = m.is_default ? '✓' : '';
-        const apiKeyMask = m.api_key ? '***' : '-';
         html += `<tr>
           <td style="color:var(--heading)">${m.model}</td>
-          <td title="${m.api_base}">${m.api_base.length > 30 ? m.api_base.substring(0, 30) + '...' : m.api_base}</td>
-          <td style="text-align:center">${isDefault ? '<span style="color:#22c55e;font-weight:bold;">✓</span>' : '<button onclick="setDefault(' + m.id + ')" style="background:none;border:none;color:var(--link);cursor:pointer;font-size:11px;">设为默认</button>'}</td>
-          <td style="text-align:right"><button onclick="deleteModel(${m.id})" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:11px;">删除</button></td>
+          <td title="${m.api_base}">${m.api_base.length > 35 ? m.api_base.substring(0, 35) + '...' : m.api_base}</td>
+          <td style="text-align:center">${isDefault ? '<span style="color:#22c55e;font-weight:bold;">✓ 默认</span>' : '<button onclick="setDefaultFromModal(' + m.id + ')" style="background:none;border:none;color:var(--link);cursor:pointer;font-size:11px;">设为默认</button>'}</td>
+          <td style="text-align:right"><button onclick="deleteModelFromModal(${m.id})" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:11px;">删除</button></td>
         </tr>`;
       });
       html += '</tbody></table>';
@@ -886,13 +910,13 @@ function loadScopeModels(scope) {
     });
 }
 
-function addModel() {
-  const scope = document.getElementById('scopeSelect').value;
+function addModelFromModal() {
+  const scope = document.getElementById('scopeSelect').value || window.location.pathname.replace(/^\/+|\/+$/g, '');
   if (!scope) return;
   
-  const model = document.getElementById('newModelName').value.trim();
-  const apiBase = document.getElementById('newModelApiBase').value.trim();
-  const apiKey = document.getElementById('newModelApiKey').value.trim();
+  const model = document.getElementById('modalModelName').value.trim();
+  const apiBase = document.getElementById('modalModelApiBase').value.trim();
+  const apiKey = document.getElementById('modalModelApiKey').value.trim();
   
   if (!model || !apiBase) {
     alert('请填写模型名称和 API Base URL');
@@ -907,18 +931,18 @@ function addModel() {
   .then(r => r.json())
   .then(d => {
     if (d.success) {
-      document.getElementById('newModelName').value = '';
-      document.getElementById('newModelApiBase').value = '';
-      document.getElementById('newModelApiKey').value = '';
-      loadScopeModels(scope);
+      document.getElementById('modalModelName').value = '';
+      document.getElementById('modalModelApiBase').value = '';
+      document.getElementById('modalModelApiKey').value = '';
+      loadModalModels(scope);
     } else {
       alert(d.error || '添加失败');
     }
   });
 }
 
-function deleteModel(modelId) {
-  const scope = document.getElementById('scopeSelect').value;
+function deleteModelFromModal(modelId) {
+  const scope = document.getElementById('scopeSelect').value || window.location.pathname.replace(/^\/+|\/+$/g, '');
   if (!scope || !confirm('确定删除此模型配置？')) return;
   
   fetch('/api/scope/' + encodeURIComponent(scope) + '/models/' + modelId, {
@@ -927,13 +951,13 @@ function deleteModel(modelId) {
   .then(r => r.json())
   .then(d => {
     if (d.success) {
-      loadScopeModels(scope);
+      loadModalModels(scope);
     }
   });
 }
 
-function setDefault(modelId) {
-  const scope = document.getElementById('scopeSelect').value;
+function setDefaultFromModal(modelId) {
+  const scope = document.getElementById('scopeSelect').value || window.location.pathname.replace(/^\/+|\/+$/g, '');
   if (!scope) return;
   
   fetch('/api/scope/' + encodeURIComponent(scope) + '/models/' + modelId + '/default', {
@@ -942,10 +966,17 @@ function setDefault(modelId) {
   .then(r => r.json())
   .then(d => {
     if (d.success) {
-      loadScopeModels(scope);
+      loadModalModels(scope);
     }
   });
 }
+
+// 点击模态框外部关闭
+document.getElementById('modelsModal')?.addEventListener('click', (e) => {
+  if (e.target === document.getElementById('modelsModal')) {
+    closeModelsModal();
+  }
+});
 
 initPrefs();
 
@@ -954,7 +985,6 @@ const pathScope = window.location.pathname.replace(/^\/+|\/+$/g, '');
 loadScopes(() => {
   if (pathScope) {
     document.getElementById('scopeSelect').value = pathScope;
-    loadScopeModels(pathScope);
   }
   fetchAll();
   fetchRecent(1);
