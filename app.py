@@ -497,8 +497,12 @@ def api_scopes():
 
 
 @app.route("/")
-def dashboard():
-    return render_template("index.html")
+@app.route("/<scope>")
+def dashboard(scope=None):
+    # 排除 API 路径
+    if scope and scope.startswith('api'):
+        return jsonify({"error": "Not found"}), 404
+    return render_template("index.html", scope=scope or "")
 
 
 init_db()

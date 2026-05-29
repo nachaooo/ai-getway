@@ -821,7 +821,13 @@ function loadScopes() {
 }
 
 document.getElementById('scopeSelect')?.addEventListener('change', () => {
-  localStorage.setItem('ag_scope', document.getElementById('scopeSelect').value);
+  const scope = document.getElementById('scopeSelect').value;
+  // 更新 URL 路径
+  if (scope) {
+    window.history.pushState({}, '', '/' + scope);
+  } else {
+    window.history.pushState({}, '', '/');
+  }
   page = 1;
   fetchAll();
   fetchRecent(1);
@@ -829,12 +835,19 @@ document.getElementById('scopeSelect')?.addEventListener('change', () => {
 
 initPrefs();
 loadScopes();
-fetchAll();
-fetchRecent(1);
 
-const savedScope = localStorage.getItem('ag_scope');
-if (savedScope) {
-  document.getElementById('scopeSelect').value = savedScope;
+// 从 URL 路径中读取 scope
+const pathScope = window.location.pathname.replace(/^\/+|\/+$/g, '');
+if (pathScope) {
+  // 等待 loadScopes 完成后设置选中值
+  setTimeout(() => {
+    document.getElementById('scopeSelect').value = pathScope;
+    fetchAll();
+    fetchRecent(1);
+  }, 500);
+} else {
+  fetchAll();
+  fetchRecent(1);
 }
 
 setInterval(() => { loadScopes(); fetchAll(); fetchRecent(page); }, 15000);
