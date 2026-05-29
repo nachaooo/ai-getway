@@ -816,7 +816,7 @@ document.querySelectorAll('[data-range]').forEach(btn => {
   });
 });
 
-function loadScopes() {
+function loadScopes(callback) {
   fetch('/api/scopes')
     .then(r => r.json())
     .then(d => {
@@ -830,6 +830,7 @@ function loadScopes() {
         select.appendChild(opt);
       });
       select.value = currentVal;
+      if (callback) callback();
     });
 }
 
@@ -947,22 +948,17 @@ function setDefault(modelId) {
 }
 
 initPrefs();
-loadScopes();
 
 // 从 URL 路径中读取 scope
 const pathScope = window.location.pathname.replace(/^\/+|\/+$/g, '');
-if (pathScope) {
-  // 等待 loadScopes 完成后设置选中值
-  setTimeout(() => {
+loadScopes(() => {
+  if (pathScope) {
     document.getElementById('scopeSelect').value = pathScope;
     loadScopeModels(pathScope);
-    fetchAll();
-    fetchRecent(1);
-  }, 500);
-} else {
+  }
   fetchAll();
   fetchRecent(1);
-}
+});
 
 setInterval(() => { loadScopes(); fetchAll(); fetchRecent(page); }, 15000);
 </script>
