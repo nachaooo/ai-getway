@@ -62,6 +62,9 @@ a { color: var(--link); font-size: 12px; text-decoration: none; }
 .controls { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
 .controls button { background: var(--btn-bg); border: 1px solid var(--btn-border); color: var(--btn-fg); padding: 6px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
 .controls button.active { background: var(--btn-active-bg); border-color: var(--btn-active-border); color: var(--btn-active-fg); }
+.scope-select { background: var(--btn-bg); border: 1px solid var(--btn-border); color: var(--btn-fg); padding: 6px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; outline: none; }
+.scope-select:focus { border-color: var(--btn-active-border); }
+.scope-select option { background: var(--card-bg); color: var(--fg); }
 .stats { display: flex; gap: 12px; margin-bottom: 20px; }
 .stat { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px 18px; flex: 1; }
 .stat .n { font-size: 24px; font-weight: 700; color: var(--heading); }
@@ -152,6 +155,9 @@ td:last-child, th:last-child { text-align: right; }
     <button data-range="30d" data-i18n="range30d">30天</button>
     <button data-range="today" data-i18n="rangeToday">今日</button>
     <button data-range="yesterday" data-i18n="rangeYesterday">昨日</button>
+    <select id="scopeSelect" class="scope-select">
+      <option value="">全部命名空间</option>
+    </select>
   </div>
 
   <div class="kanban-main">
@@ -678,6 +684,7 @@ function fetchAll() {
   const now = new Date();
   const btn = document.querySelector('[data-range].active');
   const range = btn?.dataset?.range || '24h';
+  const scope = document.getElementById('scopeSelect')?.value || '';
   let startDate, endDate;
   if (range === 'today') {
     startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -697,7 +704,9 @@ function fetchAll() {
   currentStart = s;
   currentEnd = e;
 
-  const mainPromise = fetch('/api/usage?' + new URLSearchParams({ start: s, end: e, group_by: groupBy }))
+  const params = { start: s, end: e, group_by: groupBy };
+  if (scope) params.scope = scope;
+  const mainPromise = fetch('/api/usage?' + new URLSearchParams(params))
     .then(r => r.json());
 
   let prevStart, prevEnd;
@@ -769,7 +778,9 @@ function fetchAll() {
 
 function fetchRecent(p) {
   page = p;
+  const scope = document.getElementById('scopeSelect')?.value || '';
   const params = { page: page, page_size: PAGE_SIZE };
+  if (scope) params.scope = scope;
   if (currentStart && currentEnd) {
     params.start = currentStart;
     params.end = currentEnd;
@@ -792,10 +803,41 @@ document.querySelectorAll('[data-range]').forEach(btn => {
   });
 });
 
+function loadScopes() {
+  fetch('/api/scopes')
+    .then(r => r.json())
+    .then(d => {
+      const select = document.getElementById('scopeSelect');
+      const currentVal = select.value;
+      select.innerHTML = '<option value="">全部命名空间</option>';
+      (d.scopes || []).forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.scope;
+        opt.textContent = s.scope + ' (' + s.request_count + ')';
+        select.appendChild(opt);
+      });
+      select.value = currentVal;
+    });
+}
+
+document.getElementById('scopeSelect')?.addEventListener('change', () => {
+  localStorage.setItem('ag_scope', document.getElementById('scopeSelect').value);
+  page = 1;
+  fetchAll();
+  fetchRecent(1);
+});
+
 initPrefs();
+loadScopes();
 fetchAll();
 fetchRecent(1);
-setInterval(() => { fetchAll(); fetchRecent(page); }, 15000);
+
+const savedScope = localStorage.getItem('ag_scope');
+if (savedScope) {
+  document.getElementById('scopeSelect').value = savedScope;
+}
+
+setInterval(() => { loadScopes(); fetchAll(); fetchRecent(page); }, 15000);
 </script>
 </body>
 </html>

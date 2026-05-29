@@ -60,6 +60,7 @@ def init_db():
     conn.execute("""
         CREATE TABLE IF NOT EXISTS usage_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL DEFAULT 'default',
             model TEXT NOT NULL,
             provider TEXT NOT NULL,
             prompt_tokens INTEGER NOT NULL DEFAULT 0,
@@ -70,11 +71,12 @@ def init_db():
             duration_ms INTEGER DEFAULT 0
         )
     """)
-    # 兼容旧数据库：添加 duration_ms 列
-    try:
-        conn.execute("ALTER TABLE usage_logs ADD COLUMN duration_ms INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
+    # 兼容旧数据库：添加新列
+    for col, dtype in [("duration_ms", "INTEGER DEFAULT 0"), ("scope", "TEXT NOT NULL DEFAULT 'default'")]:
+        try:
+            conn.execute(f"ALTER TABLE usage_logs ADD COLUMN {col} {dtype}")
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     conn.close()
 
@@ -144,21 +146,21 @@ def _extract_content(data: dict) -> str:
         pass
     return ""
 
-def _log_usage(model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms=0):
+def _log_usage(scope, model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms=0):
     try:
         conn = get_db()
         conn.execute(
-            "INSERT INTO usage_logs (model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms),
+            "INSERT INTO usage_logs (scope, model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (scope, model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms),
         )
         conn.commit()
         conn.close()
         speed = f" {(total_tokens * 1000 // max(duration_ms, 1))}t/s" if duration_ms else ""
-        print(f"  LOG: {model} | {provider} | +{prompt_tokens}p +{completion_tokens}c = {total_tokens}t | {duration_ms}ms{speed}")
+        print(f"  LOG: [{scope}] {model} | {provider} | +{prompt_tokens}p +{completion_tokens}c = {total_tokens}t | {duration_ms}ms{speed}")
     except Exception as e:
         print(f"  LOG FAIL: {e}")
 
-def _handle_stream(target_url, headers, body_data, model, provider_label, prompt_tokens, raw_body=None):
+def _handle_stream(scope, target_url, headers, body_data, model, provider_label, prompt_tokens, raw_body=None):
     if raw_body:
         resp = requests.post(target_url, headers=headers, data=raw_body, stream=True, timeout=300)
     else:
@@ -232,7 +234,7 @@ def _handle_stream(target_url, headers, body_data, model, provider_label, prompt
             ct = count_tokens(model, complete_content)
         end_time = state.get("end_time") or datetime.now()
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
-        _log_usage(model, provider_label, pt, ct, pt + ct, path, duration_ms)
+        _log_usage(scope, model, provider_label, pt, ct, pt + ct, path, duration_ms)
 
     response = Response(stream_with_context(generate()), content_type=resp.headers.get("content-type", "text/event-stream"))
     response.call_on_close(do_log)
@@ -251,7 +253,7 @@ def _clean_messages(body_dict: dict) -> dict:
     return body_dict
 
 
-def _proxy_passthrough(upstream_url, body, model, stream):
+def _proxy_passthrough(scope, upstream_url, body, model, stream):
     headers = {"Content-Type": "application/json"}
     for h in ("Authorization", "User-Agent"):
         v = request.headers.get(h)
@@ -268,7 +270,7 @@ def _proxy_passthrough(upstream_url, body, model, stream):
     raw_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
     if stream:
-        return _handle_stream(upstream_url, headers, body, model, provider_label, prompt_tokens, raw_body)
+        return _handle_stream(scope, upstream_url, headers, body, model, provider_label, prompt_tokens, raw_body)
 
     print(f"  POST {upstream_url} | model={model} | stream={stream} | body={raw_body[:200].decode('utf-8', errors='replace')}")
     start_time = datetime.now()
@@ -285,25 +287,27 @@ def _proxy_passthrough(upstream_url, body, model, stream):
         prompt_tokens = usage["prompt_tokens"]
     completion_tokens = usage.get("completion_tokens", 0) or count_tokens(model, _extract_content(data))
     duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-    _log_usage(model, provider_label, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, request.path, duration_ms)
+    _log_usage(scope, model, provider_label, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, request.path, duration_ms)
     return jsonify(data)
 
 
 @app.route("/v1/chat/completions", methods=["POST"])
-def proxy():
+@app.route("/<scope>/v1/chat/completions", methods=["POST"])
+def proxy(scope="default"):
     body = request.get_json(force=True)
     model = body.get("model", "")
     stream = body.get("stream", False)
 
     upstream_url = request.args.get("by")
     if upstream_url:
-        return _proxy_passthrough(upstream_url.rstrip("/") + "/chat/completions", body, model, stream)
+        return _proxy_passthrough(scope, upstream_url.rstrip("/") + "/chat/completions", body, model, stream)
 
     return jsonify({"error": "?by=<upstream_url> required"}), 400
 
 
 @app.route("/v1", methods=["POST"])
-def proxy_v1():
+@app.route("/<scope>/v1", methods=["POST"])
+def proxy_v1(scope="default"):
     """SDK appends /chat/completions to baseURL, but when ?by= has query,
     the append lands inside the query value. Catch that here."""
     body = request.get_json(force=True)
@@ -314,7 +318,7 @@ def proxy_v1():
     if not upstream_url:
         return jsonify({"error": "?by=<upstream_url> required"}), 400
 
-    return _proxy_passthrough(upstream_url, body, model, stream)
+    return _proxy_passthrough(scope, upstream_url, body, model, stream)
 
 
 @app.route("/api/usage")
@@ -322,6 +326,7 @@ def api_usage():
     start = request.args.get("start", (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S"))
     end = request.args.get("end", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     group_by = request.args.get("group_by", "hour")
+    scope = request.args.get("scope")
 
     if group_by == "minute":
         sql_format = "strftime('%Y-%m-%d %H:%M', request_time)"
@@ -333,9 +338,18 @@ def api_usage():
         sql_format = "strftime('%Y-%m-%d %H:00', request_time)"
 
     conn = get_db()
-    total_in_range = conn.execute("SELECT COUNT(*) as n FROM usage_logs WHERE request_time BETWEEN ? AND ?", (start, end)).fetchone()["n"]
+    
+    # 构建 WHERE 条件
+    where_conditions = ["request_time BETWEEN ? AND ?"]
+    params = [start, end]
+    if scope:
+        where_conditions.append("scope = ?")
+        params.append(scope)
+    where_clause = " AND ".join(where_conditions)
+    
+    total_in_range = conn.execute(f"SELECT COUNT(*) as n FROM usage_logs WHERE {where_clause}", params).fetchone()["n"]
     total_all = conn.execute("SELECT COUNT(*) as n FROM usage_logs").fetchone()["n"]
-    print(f"  USAGE API: start={start} end={end} | in_range={total_in_range} total_all={total_all}")
+    print(f"  USAGE API: start={start} end={end} scope={scope} | in_range={total_in_range} total_all={total_all}")
     rows = conn.execute(
         f"""
         SELECT {sql_format} as period,
@@ -346,11 +360,11 @@ def api_usage():
                model,
                provider
         FROM usage_logs
-        WHERE request_time BETWEEN ? AND ?
+        WHERE {where_clause}
         GROUP BY period, model, provider
         ORDER BY period ASC
         """,
-        (start, end),
+        params,
     ).fetchall()
 
     by_model = {}
@@ -379,13 +393,13 @@ def api_usage():
         })
 
     month_rows = conn.execute(
-        "SELECT provider, COUNT(*) as cnt, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(duration_ms) as duration_ms FROM usage_logs WHERE request_time BETWEEN ? AND ? GROUP BY provider",
-        (start, end),
+        f"SELECT provider, COUNT(*) as cnt, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(duration_ms) as duration_ms FROM usage_logs WHERE {where_clause} GROUP BY provider",
+        params,
     ).fetchall()
 
     model_rows = conn.execute(
-        "SELECT model, COUNT(*) as cnt, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(duration_ms) as duration_ms FROM usage_logs WHERE request_time BETWEEN ? AND ? GROUP BY model",
-        (start, end),
+        f"SELECT model, COUNT(*) as cnt, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(duration_ms) as duration_ms FROM usage_logs WHERE {where_clause} GROUP BY model",
+        params,
     ).fetchall()
     conn.close()
 
@@ -435,6 +449,7 @@ def api_recent():
     page_size = request.args.get("page_size", 100, type=int)
     start = request.args.get("start")
     end = request.args.get("end")
+    scope = request.args.get("scope")
     if page < 1:
         page = 1
     if page_size < 1:
@@ -442,11 +457,16 @@ def api_recent():
     offset = (page - 1) * page_size
 
     conn = get_db()
-    where = ""
+    where_conditions = []
     params = []
     if start and end:
-        where = "WHERE request_time BETWEEN ? AND ?"
-        params = [start, end]
+        where_conditions.append("request_time BETWEEN ? AND ?")
+        params.extend([start, end])
+    if scope:
+        where_conditions.append("scope = ?")
+        params.append(scope)
+    
+    where = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
 
     total = conn.execute(f"SELECT COUNT(*) as n FROM usage_logs {where}", params).fetchone()["n"]
     rows = conn.execute(
@@ -461,6 +481,19 @@ def api_recent():
         "page_size": page_size,
         "items": [dict(r) for r in rows],
     })
+
+
+@app.route("/api/scopes")
+def api_scopes():
+    """获取所有命名空间列表"""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT scope, COUNT(*) as request_count, SUM(total_tokens) as total_tokens FROM usage_logs GROUP BY scope ORDER BY request_count DESC"
+    ).fetchall()
+    conn.close()
+    
+    scopes = [dict(r) for r in rows]
+    return jsonify({"scopes": scopes})
 
 
 @app.route("/")
