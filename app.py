@@ -71,6 +71,19 @@ def init_db():
             duration_ms INTEGER DEFAULT 0
         )
     """)
+    # 用户模型配置表
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS scope_models (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL,
+            model TEXT NOT NULL,
+            api_base TEXT NOT NULL,
+            api_key TEXT DEFAULT '',
+            is_default INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT (datetime('now', 'localtime')),
+            UNIQUE(scope, model)
+        )
+    """)
     # 兼容旧数据库：添加新列
     for col, dtype in [("duration_ms", "INTEGER DEFAULT 0"), ("scope", "TEXT NOT NULL DEFAULT 'default'")]:
         try:
@@ -301,8 +314,29 @@ def proxy(scope="default"):
     upstream_url = request.args.get("by")
     if upstream_url:
         return _proxy_passthrough(scope, upstream_url.rstrip("/") + "/chat/completions", body, model, stream)
-
-    return jsonify({"error": "?by=<upstream_url> required"}), 400
+    
+    # 没有 by 参数时，查找默认模型配置
+    if not model:
+        return jsonify({"error": "model is required when ?by is not specified"}), 400
+    
+    conn = get_db()
+    row = conn.execute(
+        "SELECT api_base, api_key FROM scope_models WHERE scope = ? AND (model = ? OR is_default = 1) ORDER BY is_default DESC LIMIT 1",
+        (scope, model)
+    ).fetchone()
+    conn.close()
+    
+    if not row:
+        return jsonify({"error": f"No model config found for scope '{scope}' and model '{model}'. Use ?by=<upstream_url> or configure models."}), 400
+    
+    api_base = row["api_base"].rstrip("/")
+    api_key = row["api_key"]
+    
+    # 构建请求头
+    if api_key:
+        request.headers = {**request.headers, "Authorization": f"Bearer {api_key}"}
+    
+    return _proxy_passthrough(scope, api_base + "/chat/completions", body, model, stream)
 
 
 @app.route("/v1", methods=["POST"])
@@ -315,10 +349,31 @@ def proxy_v1(scope="default"):
     stream = body.get("stream", False)
 
     upstream_url = request.args.get("by")
-    if not upstream_url:
-        return jsonify({"error": "?by=<upstream_url> required"}), 400
-
-    return _proxy_passthrough(scope, upstream_url, body, model, stream)
+    if upstream_url:
+        return _proxy_passthrough(scope, upstream_url, body, model, stream)
+    
+    # 没有 by 参数时，查找默认模型配置
+    if not model:
+        return jsonify({"error": "model is required when ?by is not specified"}), 400
+    
+    conn = get_db()
+    row = conn.execute(
+        "SELECT api_base, api_key FROM scope_models WHERE scope = ? AND (model = ? OR is_default = 1) ORDER BY is_default DESC LIMIT 1",
+        (scope, model)
+    ).fetchone()
+    conn.close()
+    
+    if not row:
+        return jsonify({"error": f"No model config found for scope '{scope}' and model '{model}'. Use ?by=<upstream_url> or configure models."}), 400
+    
+    api_base = row["api_base"].rstrip("/")
+    api_key = row["api_key"]
+    
+    # 构建请求头
+    if api_key:
+        request.headers = {**request.headers, "Authorization": f"Bearer {api_key}"}
+    
+    return _proxy_passthrough(scope, api_base, body, model, stream)
 
 
 @app.route("/api/usage")
@@ -494,6 +549,76 @@ def api_scopes():
     
     scopes = [dict(r) for r in rows]
     return jsonify({"scopes": scopes})
+
+
+@app.route("/api/scope/<scope>/models", methods=["GET"])
+def get_scope_models(scope):
+    """获取指定命名空间的模型配置"""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM scope_models WHERE scope = ? ORDER BY is_default DESC, model ASC",
+        (scope,)
+    ).fetchall()
+    conn.close()
+    
+    models = [dict(r) for r in rows]
+    return jsonify({"scope": scope, "models": models})
+
+
+@app.route("/api/scope/<scope>/models", methods=["POST"])
+def add_scope_model(scope):
+    """添加模型配置"""
+    data = request.get_json(force=True)
+    model = data.get("model", "").strip()
+    api_base = data.get("api_base", "").strip()
+    api_key = data.get("api_key", "").strip()
+    is_default = 1 if data.get("is_default") else 0
+    
+    if not model or not api_base:
+        return jsonify({"error": "model and api_base are required"}), 400
+    
+    conn = get_db()
+    try:
+        # 如果设置为默认，先取消其他默认
+        if is_default:
+            conn.execute("UPDATE scope_models SET is_default = 0 WHERE scope = ?", (scope,))
+        
+        conn.execute(
+            "INSERT OR REPLACE INTO scope_models (scope, model, api_base, api_key, is_default) VALUES (?, ?, ?, ?, ?)",
+            (scope, model, api_base, api_key, is_default)
+        )
+        conn.commit()
+    except Exception as e:
+        conn.close()
+        return jsonify({"error": str(e)}), 500
+    conn.close()
+    
+    return jsonify({"success": True})
+
+
+@app.route("/api/scope/<scope>/models/<int:model_id>", methods=["DELETE"])
+def delete_scope_model(scope, model_id):
+    """删除模型配置"""
+    conn = get_db()
+    conn.execute("DELETE FROM scope_models WHERE id = ? AND scope = ?", (model_id, scope))
+    conn.commit()
+    conn.close()
+    
+    return jsonify({"success": True})
+
+
+@app.route("/api/scope/<scope>/models/<int:model_id>/default", methods=["PUT"])
+def set_default_model(scope, model_id):
+    """设置默认模型"""
+    conn = get_db()
+    # 取消该命名空间下所有默认
+    conn.execute("UPDATE scope_models SET is_default = 0 WHERE scope = ?", (scope,))
+    # 设置指定模型为默认
+    conn.execute("UPDATE scope_models SET is_default = 1 WHERE id = ? AND scope = ?", (model_id, scope))
+    conn.commit()
+    conn.close()
+    
+    return jsonify({"success": True})
 
 
 @app.route("/")

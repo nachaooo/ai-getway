@@ -200,6 +200,19 @@ td:last-child, th:last-child { text-align: right; }
         </div>
         <div class="pages" id="pages"></div>
       </div>
+      
+      <div class="section" id="modelConfigSection" style="display:none;">
+        <h2>模型配置 <span id="currentScopeLabel" style="color:var(--btn-active-bg);"></span></h2>
+        <div id="modelConfigList"></div>
+        <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--card-border);">
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <input type="text" id="newModelName" placeholder="模型名称" style="flex:1; min-width:120px; background:var(--btn-bg); border:1px solid var(--btn-border); color:var(--fg); padding:6px 10px; border-radius:5px; font-size:12px;">
+            <input type="text" id="newModelApiBase" placeholder="API Base URL" style="flex:2; min-width:180px; background:var(--btn-bg); border:1px solid var(--btn-border); color:var(--fg); padding:6px 10px; border-radius:5px; font-size:12px;">
+            <input type="password" id="newModelApiKey" placeholder="API Key (可选)" style="flex:1; min-width:120px; background:var(--btn-bg); border:1px solid var(--btn-border); color:var(--fg); padding:6px 10px; border-radius:5px; font-size:12px;">
+            <button onclick="addModel()" style="background:var(--btn-active-bg); border:1px solid var(--btn-active-border); color:var(--btn-active-fg); padding:6px 14px; border-radius:5px; cursor:pointer; font-size:12px;">添加</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -829,9 +842,109 @@ document.getElementById('scopeSelect')?.addEventListener('change', () => {
     window.history.pushState({}, '', '/');
   }
   page = 1;
+  loadScopeModels(scope);
   fetchAll();
   fetchRecent(1);
 });
+
+// 模型配置相关函数
+function loadScopeModels(scope) {
+  const section = document.getElementById('modelConfigSection');
+  const label = document.getElementById('currentScopeLabel');
+  const list = document.getElementById('modelConfigList');
+  
+  if (!scope) {
+    section.style.display = 'none';
+    return;
+  }
+  
+  section.style.display = 'block';
+  label.textContent = '(' + scope + ')';
+  
+  fetch('/api/scope/' + encodeURIComponent(scope) + '/models')
+    .then(r => r.json())
+    .then(d => {
+      if (d.models.length === 0) {
+        list.innerHTML = '<div class="empty">暂无模型配置</div>';
+        return;
+      }
+      
+      let html = '<table><thead><tr><th>模型</th><th>API Base</th><th>默认</th><th>操作</th></tr></thead><tbody>';
+      d.models.forEach(m => {
+        const isDefault = m.is_default ? '✓' : '';
+        const apiKeyMask = m.api_key ? '***' : '-';
+        html += `<tr>
+          <td style="color:var(--heading)">${m.model}</td>
+          <td title="${m.api_base}">${m.api_base.length > 30 ? m.api_base.substring(0, 30) + '...' : m.api_base}</td>
+          <td style="text-align:center">${isDefault ? '<span style="color:#22c55e;font-weight:bold;">✓</span>' : '<button onclick="setDefault(' + m.id + ')" style="background:none;border:none;color:var(--link);cursor:pointer;font-size:11px;">设为默认</button>'}</td>
+          <td style="text-align:right"><button onclick="deleteModel(${m.id})" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:11px;">删除</button></td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+      list.innerHTML = html;
+    });
+}
+
+function addModel() {
+  const scope = document.getElementById('scopeSelect').value;
+  if (!scope) return;
+  
+  const model = document.getElementById('newModelName').value.trim();
+  const apiBase = document.getElementById('newModelApiBase').value.trim();
+  const apiKey = document.getElementById('newModelApiKey').value.trim();
+  
+  if (!model || !apiBase) {
+    alert('请填写模型名称和 API Base URL');
+    return;
+  }
+  
+  fetch('/api/scope/' + encodeURIComponent(scope) + '/models', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({model, api_base: apiBase, api_key: apiKey, is_default: false})
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.success) {
+      document.getElementById('newModelName').value = '';
+      document.getElementById('newModelApiBase').value = '';
+      document.getElementById('newModelApiKey').value = '';
+      loadScopeModels(scope);
+    } else {
+      alert(d.error || '添加失败');
+    }
+  });
+}
+
+function deleteModel(modelId) {
+  const scope = document.getElementById('scopeSelect').value;
+  if (!scope || !confirm('确定删除此模型配置？')) return;
+  
+  fetch('/api/scope/' + encodeURIComponent(scope) + '/models/' + modelId, {
+    method: 'DELETE'
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.success) {
+      loadScopeModels(scope);
+    }
+  });
+}
+
+function setDefault(modelId) {
+  const scope = document.getElementById('scopeSelect').value;
+  if (!scope) return;
+  
+  fetch('/api/scope/' + encodeURIComponent(scope) + '/models/' + modelId + '/default', {
+    method: 'PUT'
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.success) {
+      loadScopeModels(scope);
+    }
+  });
+}
 
 initPrefs();
 loadScopes();
@@ -842,6 +955,7 @@ if (pathScope) {
   // 等待 loadScopes 完成后设置选中值
   setTimeout(() => {
     document.getElementById('scopeSelect').value = pathScope;
+    loadScopeModels(pathScope);
     fetchAll();
     fetchRecent(1);
   }, 500);
