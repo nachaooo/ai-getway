@@ -125,7 +125,7 @@ def _create_lnk():
     $WshShell = New-Object -comObject WScript.Shell
     $Shortcut = $WshShell.CreateShortcut({json.dumps(LNK_PATH)})
     $Shortcut.TargetPath = {json.dumps(EXE_PATH)}
-    $Shortcut.Arguments = "--worker"
+    $Shortcut.Arguments = ""
     $Shortcut.WorkingDirectory = {json.dumps(os.path.dirname(EXE_PATH))}
     $Shortcut.IconLocation = {json.dumps(ICON_ICO)}
     $Shortcut.Save()

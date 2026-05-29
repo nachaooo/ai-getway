@@ -9,3 +9,4 @@ build/
 dist/
 static/icon.ico
 logs/
+data/

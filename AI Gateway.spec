@@ -1,20 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
-import re
+import os, re
 from PyInstaller.utils.hooks import collect_data_files
 
-_with_version = re.search(r'VERSION = "([^"]+)"', open('app.py', encoding='utf-8').read())
+_with_version = re.search(r'VERSION = "([^"]+)"', open('app.py', encoding='utf-8', errors='replace').read())
 _VERSION = _with_version.group(1) if _with_version else "0.0.0"
 
 a = Analysis(
     ['main.py'],
-    pathex=[],
+    pathex=[os.getcwd()],
     binaries=[],
     datas=[
+        ('app.py', '.'),
         ('templates', 'templates'),
         ('static', 'static'),
         ('tokenizers/deepseek', 'tokenizers/deepseek'),
     ] + collect_data_files('tiktoken'),
-    hiddenimports=['tiktoken_ext.openai_public'],
+    hiddenimports=['app', 'tiktoken_ext.openai_public'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

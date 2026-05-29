@@ -82,10 +82,16 @@ Double-click `start.vbs` — installs dependencies automatically, runs in backgr
 
 **Build standalone executable (Windows):**
 ```bash
+# One-click build (auto-bumps patch version)
+build.vbs
+
+# Or manually:
 pip install pyinstaller
 pyinstaller "AI Gateway.spec"
 ```
-Output: `dist/AI Gateway.exe` (~26 MB, single file, no console window).
+Output: `dist/AI Gateway vX.Y.Z.exe` (~26 MB, single file, no console window).
+
+> **Note**: `build.vbs` automatically increments the patch version (e.g. 0.6.0 → 0.6.1) in `app.py` before building.
 
 **Auto-start (Windows):**
 Toggle it directly from the tray icon right-click menu. It will appear in Windows Settings → Apps → Startup, where you can also manage it.
