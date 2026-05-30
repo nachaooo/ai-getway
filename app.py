@@ -621,6 +621,66 @@ def set_default_model(scope, model_id):
     return jsonify({"success": True})
 
 
+@app.route("/api/test-model", methods=["POST"])
+def test_model():
+    """测试模型连接"""
+    data = request.get_json(force=True)
+    scope = data.get("scope", "default")
+    model = data.get("model", "").strip()
+    api_base = data.get("api_base", "").strip()
+    api_key = data.get("api_key", "").strip()
+    
+    if not model or not api_base:
+        return jsonify({"success": False, "error": "model and api_base are required"})
+    
+    # 构建测试请求
+    test_url = api_base.rstrip("/") + "/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    
+    test_body = {
+        "model": model,
+        "messages": [{"role": "user", "content": "Hi"}],
+        "max_tokens": 5,
+        "stream": False
+    }
+    
+    start_time = datetime.now()
+    try:
+        resp = requests.post(test_url, headers=headers, json=test_body, timeout=30)
+        latency = int((datetime.now() - start_time).total_seconds() * 1000)
+        
+        if resp.ok:
+            data = resp.json()
+            # 尝试获取响应内容
+            content = ""
+            if "choices" in data and len(data["choices"]) > 0:
+                content = data["choices"][0].get("message", {}).get("content", "")
+            elif "content" in data:
+                content = str(data["content"])
+            
+            return jsonify({
+                "success": True,
+                "latency": latency,
+                "model": model,
+                "response_preview": content[:100] if content else "(empty)"
+            })
+        else:
+            error_msg = resp.text[:200] if resp.text else f"HTTP {resp.status_code}"
+            return jsonify({
+                "success": False,
+                "error": error_msg,
+                "latency": latency
+            })
+    except requests.exceptions.Timeout:
+        return jsonify({"success": False, "error": "请求超时 (30s)"})
+    except requests.exceptions.ConnectionError:
+        return jsonify({"success": False, "error": f"无法连接到 {api_base}"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
 @app.route("/")
 def landing():
     return render_template("landing.html")

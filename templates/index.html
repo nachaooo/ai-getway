@@ -108,18 +108,42 @@ td:last-child, th:last-child { text-align: right; }
 [data-layout="kanban"] h2 { flex-shrink: 0; }
 
 /* 模态框样式 */
-.modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
-.modal-content { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px; width: 90%; max-width: 700px; max-height: 80vh; display: flex; flex-direction: column; }
-.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--card-border); }
-.modal-header h3 { font-size: 15px; color: var(--heading); margin: 0; }
-.modal-close { background: none; border: none; color: var(--muted); font-size: 24px; cursor: pointer; padding: 0; line-height: 1; }
+.modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.modal-content { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; width: 100%; max-width: 700px; max-height: 90vh; display: flex; flex-direction: column; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px; border-bottom: 1px solid var(--card-border); }
+.modal-header h3 { font-size: 14px; color: var(--heading); margin: 0; }
+.modal-close { background: none; border: none; color: var(--muted); font-size: 24px; cursor: pointer; padding: 4px; line-height: 1; }
 .modal-close:hover { color: var(--fg); }
-.modal-body { padding: 20px; overflow-y: auto; flex: 1; }
-.modal-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--card-border); display: flex; gap: 8px; flex-wrap: wrap; }
-.modal-form input { flex: 1; min-width: 150px; background: var(--btn-bg); border: 1px solid var(--btn-border); color: var(--fg); padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+.modal-body { padding: 16px; overflow-y: auto; flex: 1; }
+.modal-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--card-border); display: flex; flex-direction: column; gap: 8px; }
+.modal-form input { width: 100%; background: var(--btn-bg); border: 1px solid var(--btn-border); color: var(--fg); padding: 10px 12px; border-radius: 6px; font-size: 13px; }
 .modal-form input:focus { outline: none; border-color: var(--btn-active-border); }
-.modal-form button { background: var(--btn-active-bg); border: 1px solid var(--btn-active-border); color: var(--btn-active-fg); padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 13px; white-space: nowrap; }
-.modal-form button:hover { opacity: 0.9; }
+.modal-form-actions { display: flex; gap: 8px; width: 100%; }
+.modal-form-actions button { flex: 1; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; border: none; transition: all 0.2s; }
+.btn-add { background: var(--btn-active-bg); color: var(--btn-active-fg); }
+.btn-add:hover { opacity: 0.9; }
+.btn-test { background: var(--btn-bg); border: 1px solid var(--btn-border) !important; color: var(--btn-fg); display: flex; align-items: center; justify-content: center; gap: 6px; }
+.btn-test:hover { border-color: #22c55e !important; color: #22c55e; }
+.btn-test.testing { opacity: 0.6; cursor: not-allowed; }
+.test-result { margin-top: 12px; padding: 12px; border-radius: 8px; font-size: 13px; line-height: 1.6; }
+.test-result.success { background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.2); color: #22c55e; }
+.test-result.error { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #ef4444; }
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.spin { animation: spin 1s linear infinite; }
+
+@media (min-width: 640px) {
+  .modal { padding: 24px; }
+  .modal-header { padding: 16px 20px; }
+  .modal-header h3 { font-size: 15px; }
+  .modal-body { padding: 20px; }
+  .modal-form { flex-direction: row; flex-wrap: wrap; }
+  .modal-form input { flex: 1; min-width: 150px; }
+  .modal-form button { width: auto; }
+}
 </style>
 </head>
 <body>
@@ -229,11 +253,20 @@ td:last-child, th:last-child { text-align: right; }
     <div class="modal-body">
       <div id="modalModelList"></div>
       <div class="modal-form">
-        <input type="text" id="modalModelName" placeholder="模型名称">
-        <input type="text" id="modalModelApiBase" placeholder="API Base URL">
+        <input type="text" id="modalModelName" placeholder="模型名称 (如 gpt-4)">
+        <input type="text" id="modalModelApiBase" placeholder="API Base URL (如 https://api.openai.com/v1)">
         <input type="password" id="modalModelApiKey" placeholder="API Key (可选)">
-        <button onclick="addModelFromModal()">添加</button>
+        <div class="modal-form-actions">
+          <button onclick="addModelFromModal()" class="btn-add">添加</button>
+          <button onclick="testModelFromModal()" class="btn-test">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            测试连接
+          </button>
+        </div>
       </div>
+      <div id="testResult" class="test-result" style="display:none;"></div>
     </div>
   </div>
 </div>
@@ -939,6 +972,61 @@ function addModelFromModal() {
       alert(d.error || '添加失败');
     }
   });
+}
+
+function testModelFromModal() {
+  const scope = document.getElementById('scopeSelect').value || window.location.pathname.replace(/^\/+|\/+$/g, '');
+  if (!scope) return;
+  
+  const model = document.getElementById('modalModelName').value.trim();
+  const apiBase = document.getElementById('modalModelApiBase').value.trim();
+  const apiKey = document.getElementById('modalModelApiKey').value.trim();
+  const resultDiv = document.getElementById('testResult');
+  const testBtn = document.querySelector('.btn-test');
+  
+  if (!model || !apiBase) {
+    showTestResult('error', '请先填写模型名称和 API Base URL');
+    return;
+  }
+  
+  // 显示测试中状态
+  testBtn.classList.add('testing');
+  testBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> 测试中...';
+  resultDiv.style.display = 'none';
+  
+  fetch('/api/test-model', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      scope: scope,
+      model: model,
+      api_base: apiBase,
+      api_key: apiKey
+    })
+  })
+  .then(r => r.json())
+  .then(d => {
+    testBtn.classList.remove('testing');
+    testBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> 测试连接';
+    
+    if (d.success) {
+      showTestResult('success', `✓ 连接成功！响应时间: ${d.latency}ms，模型: ${d.model}`);
+    } else {
+      showTestResult('error', `✗ 连接失败: ${d.error}`);
+    }
+  })
+  .catch(err => {
+    testBtn.classList.remove('testing');
+    testBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> 测试连接';
+    showTestResult('error', '请求失败: ' + err.message);
+  });
+}
+
+function showTestResult(type, message) {
+  const resultDiv = document.getElementById('testResult');
+  resultDiv.className = 'test-result ' + type;
+  resultDiv.textContent = message;
+  resultDiv.style.display = 'block';
 }
 
 function deleteModelFromModal(modelId) {
