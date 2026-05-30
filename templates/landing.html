@@ -780,6 +780,62 @@ footer a {
   width: 28px;
   height: 28px;
 }
+
+/* 语言下拉菜单 */
+.lang-dropdown {
+  position: relative;
+}
+
+.lang-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px 0;
+  min-width: 120px;
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+}
+
+.lang-menu.show {
+  display: block;
+}
+
+.lang-menu a {
+  display: block;
+  padding: 8px 16px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: all 0.2s;
+}
+
+.lang-menu a:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.lang-menu a.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* RTL 支持 */
+[dir="rtl"] {
+  text-align: right;
+}
+
+[dir="rtl"] .hero-desc {
+  margin: 0 auto 40px;
+}
+
+[dir="rtl"] .step-code {
+  text-align: right;
+}
 </style>
 </head>
 <body>
@@ -800,13 +856,19 @@ footer a {
     <a href="/dashboard" class="nav-link" data-i18n="navDashboard">控制台</a>
   </div>
   <div class="nav-right">
-    <button class="toggle-btn" id="langBtn" onclick="toggleLang()" title="切换语言">
-      <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-        <path d="M2 5h7M5 2v3M7 13c-1.5 2-3 3.5-5 4M12 5h9M17 2v3M17 13c1.5 2 3 3.5 5 4"/>
-        <circle cx="12" cy="12" r="10"/>
-        <path d="M2.5 9h19M2.5 15h19"/>
-      </svg>
-    </button>
+    <div class="lang-dropdown">
+      <button class="toggle-btn" id="langBtn" onclick="toggleLangMenu()" title="Language">
+        <span id="currentLang">中</span>
+      </button>
+      <div class="lang-menu" id="langMenu">
+        <a href="#" onclick="setLang('zh')">中文</a>
+        <a href="#" onclick="setLang('en')">English</a>
+        <a href="#" onclick="setLang('fr')">Français</a>
+        <a href="#" onclick="setLang('es')">Español</a>
+        <a href="#" onclick="setLang('ru')">Русский</a>
+        <a href="#" onclick="setLang('ar')">العربية</a>
+      </div>
+    </div>
     <button class="toggle-btn" id="themeBtn" onclick="toggleTheme()" title="切换主题">
       <svg class="icon-sm" id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
@@ -1059,7 +1121,7 @@ footer a {
 </footer>
 
 <script>
-// 国际化文本
+// 国际化文本 - 联合国官方语言
 const i18n = {
   zh: {
     navFeatures: '功能',
@@ -1144,7 +1206,184 @@ const i18n = {
     ctaTitle: 'Ready to Start?',
     ctaDesc: 'Experience AI Gateway and simplify your AI service management',
     ctaBtn: 'Launch Dashboard'
+  },
+  fr: {
+    navFeatures: 'Fonctionnalités',
+    navWorkflow: 'Processus',
+    navDashboard: 'Tableau de bord',
+    navStart: 'Commencer',
+    heroBadge: 'Routeur API Neural',
+    heroLine1: 'Unifié',
+    heroLine2: 'Interface Modèle AI',
+    heroDesc: 'Passerelle API IA légère et haute performance. Routage multi-modèles, isolation des espaces de noms, surveillance en temps réel.',
+    heroBtnStart: 'Commencer',
+    heroBtnLearn: 'En savoir plus',
+    statRequests: 'Requêtes quotidiennes',
+    statLatency: 'Latence moy.',
+    statUptime: 'Disponibilité',
+    statModels: 'Modèles supportés',
+    featuresTag: 'Fonctionnalités clés',
+    featuresTitle: 'Pourquoi choisir AI Gateway',
+    featuresDesc: 'Une solution complète pour gérer les points de terminaison API IA. Conçue pour les développeurs qui exigent performance et simplicité.',
+    feature1Title: 'Routage intelligent',
+    feature1Desc: 'Routez les requêtes vers différents services amont selon l\'espace de noms.',
+    feature2Title: 'Analyse en temps réel',
+    feature2Desc: 'Suivez l\'utilisation des tokens, les requêtes et les temps de réponse en temps réel.',
+    feature3Title: 'Isolation des espaces',
+    feature3Desc: 'Espaces de noms indépendants pour chaque utilisateur. Configurations et statistiques isolées.',
+    feature4Title: 'Haute performance',
+    feature4Desc: 'Proxy à latence zéro avec support streaming. Compatible avec OpenAI SDK.',
+    feature5Title: 'Configuration flexible',
+    feature5Desc: 'Gérez les configurations de modèles via l\'interface web. Support du modèle par défaut.',
+    feature6Title: 'Facturation Token',
+    feature6Desc: 'Suivi précis de la consommation de tokens. Rapports par plateforme ou par modèle.',
+    workflowTag: 'Démarrage rapide',
+    workflowTitle: 'Trois étapes pour commencer',
+    step1Title: 'Créer l\'espace de noms',
+    step1Desc: 'Visitez la console et créez votre espace de noms dédié pour obtenir un point de terminaison API.',
+    step2Title: 'Configurer les modèles',
+    step2Desc: 'Cliquez sur le bouton Models pour ajouter votre configuration de modèle.',
+    step3Title: 'Commencer les appels',
+    step3Desc: 'Utilisez le format OpenAI standard. Il utilise automatiquement le modèle par défaut.',
+    ctaTitle: 'Prêt à commencer ?',
+    ctaDesc: 'Essayez AI Gateway gratuitement et simplifiez la gestion de vos services IA',
+    ctaBtn: 'Lancer le tableau de bord'
+  },
+  es: {
+    navFeatures: 'Características',
+    navWorkflow: 'Proceso',
+    navDashboard: 'Panel',
+    navStart: 'Comenzar',
+    heroBadge: 'Enrutador API Neural',
+    heroLine1: 'Unificado',
+    heroLine2: 'Interfaz Modelo AI',
+    heroDesc: 'Pasarela API de IA ligera y de alto rendimiento. Enrutamiento multi-modelo, aislamiento de espacios de nombres, monitoreo en tiempo real.',
+    heroBtnStart: 'Comenzar',
+    heroBtnLearn: 'Más información',
+    statRequests: 'Solicitudes diarias',
+    statLatency: 'Latencia prom.',
+    statUptime: 'Disponibilidad',
+    statModels: 'Modelos soportados',
+    featuresTag: 'Funciones principales',
+    featuresTitle: '¿Por qué elegir AI Gateway?',
+    featuresDesc: 'Una solución integral para gestionar endpoints de API de IA. Para desarrolladores que exigen rendimiento y simplicidad.',
+    feature1Title: 'Enrutamiento inteligente',
+    feature1Desc: 'Enrute solicitudes a diferentes servicios según el espacio de nombres.',
+    feature2Title: 'Análisis en tiempo real',
+    feature2Desc: 'Rastree el uso de tokens, solicitudes y tiempos de respuesta en tiempo real.',
+    feature3Title: 'Aislamiento de espacios',
+    feature3Desc: 'Espacios de nombres independientes para cada usuario. Configuraciones y estadísticas aisladas.',
+    feature4Title: 'Alto rendimiento',
+    feature4Desc: 'Proxy de latencia cero con soporte streaming. Compatible con OpenAI SDK.',
+    feature5Title: 'Configuración flexible',
+    feature5Desc: 'Gestione configuraciones de modelos vía interfaz web. Soporte de modelo predeterminado.',
+    feature6Title: 'Facturación Token',
+    feature6Desc: 'Seguimiento preciso del consumo de tokens. Informes por plataforma o modelo.',
+    workflowTag: 'Inicio rápido',
+    workflowTitle: 'Tres pasos para comenzar',
+    step1Title: 'Crear espacio de nombres',
+    step1Desc: 'Visite la consola y cree su espacio de nombres dedicado para obtener un endpoint API.',
+    step2Title: 'Configurar modelos',
+    step2Desc: 'Haga clic en el botón Models para agregar su configuración de modelo.',
+    step3Title: 'Comenzar a llamar',
+    step3Desc: 'Use el formato OpenAI estándar. Usa automáticamente el modelo predeterminado.',
+    ctaTitle: '¿Listo para comenzar?',
+    ctaDesc: 'Experimente AI Gateway y simplifique la gestión de sus servicios de IA',
+    ctaBtn: 'Lanzar panel'
+  },
+  ru: {
+    navFeatures: 'Функции',
+    navWorkflow: 'Процесс',
+    navDashboard: 'Панель',
+    navStart: 'Начать',
+    heroBadge: 'Нейронный API Маршрутизатор',
+    heroLine1: 'Единый',
+    heroLine2: 'Интерфейс AI Моделей',
+    heroDesc: 'Легкий и высокопроизводительный API шлюз для AI моделей. Маршрутизация моделей, изоляция пространств имен, мониторинг в реальном времени.',
+    heroBtnStart: 'Начать',
+    heroBtnLearn: 'Узнать больше',
+    statRequests: 'Ежедневные запросы',
+    statLatency: 'Средняя задержка',
+    statUptime: 'Доступность',
+    statModels: 'Поддерживаемые модели',
+    featuresTag: 'Основные функции',
+    featuresTitle: 'Почему выбирают AI Gateway',
+    featuresDesc: 'Комплексное решение для управления AI API endpoints. Для разработчиков, требующих производительности и простоты.',
+    feature1Title: 'Умная маршрутизация',
+    feature1Desc: 'Маршрутизация запросов к разным сервисам по пространству имен.',
+    feature2Title: 'Аналитика в реальном времени',
+    feature2Desc: 'Отслеживание использования токенов, запросов и времени ответа в реальном времени.',
+    feature3Title: 'Изоляция пространств',
+    feature3Desc: 'Независимые пространства имен для каждого пользователя. Конфигурации и статистика изолированы.',
+    feature4Title: 'Высокая производительность',
+    feature4Desc: 'Прокси с нулевой задержкой и поддержкой потоковой передачи. Совместим с OpenAI SDK.',
+    feature5Title: 'Гибкая настройка',
+    feature5Desc: 'Управление конфигурациями моделей через веб-интерфейс. Поддержка модели по умолчанию.',
+    feature6Title: 'Биллинг токенов',
+    feature6Desc: 'Точное отслеживание потребления токенов. Отчеты по платформам и моделям.',
+    workflowTag: 'Быстрый старт',
+    workflowTitle: 'Три шага для начала',
+    step1Title: 'Создать пространство имен',
+    step1Desc: 'Посетите консоль и создайте свое пространство имен для получения API endpoint.',
+    step2Title: 'Настроить модели',
+    step2Desc: 'Нажмите кнопку Models, чтобы добавить конфигурацию модели.',
+    step3Title: 'Начать вызовы',
+    step3Desc: 'Используйте стандартный формат OpenAI. Автоматически использует модель по умолчанию.',
+    ctaTitle: 'Готовы начать?',
+    ctaDesc: 'Попробуйте AI Gateway бесплатно и упростите управление AI сервисами',
+    ctaBtn: 'Запустить панель'
+  },
+  ar: {
+    navFeatures: 'الميزات',
+    navWorkflow: 'العملية',
+    navDashboard: 'لوحة التحكم',
+    navStart: 'ابدأ الآن',
+    heroBadge: 'موجه API العصبي',
+    heroLine1: 'موحد',
+    heroLine2: 'واجهة نموذج AI',
+    heroDesc: 'بوابة API خفيفة وعالية الأداء لنماذج AI. توجيه متعدد النماذج، عزل مساحات الأسماء، مراقبة في الوقت الفعلي.',
+    heroBtnStart: 'ابدأ الآن',
+    heroBtnLearn: 'اعرف المزيد',
+    statRequests: 'الطلبات اليومية',
+    statLatency: 'متوسط التأخير',
+    statUptime: 'التوفر',
+    statModels: 'النماذج المدعومة',
+    featuresTag: 'الميزات الأساسية',
+    featuresTitle: 'لماذا تختار AI Gateway',
+    featuresDesc: 'حل شامل لإدارة نقاط نهاية API AI. للمطورين الذين يطلبون الأداء والبساطة.',
+    feature1Title: 'توجيه ذكي',
+    feature1Desc: 'توجيه الطلبات إلى خدمات مختلفة حسب مساحة الاسم.',
+    feature2Title: 'تحليلات فورية',
+    feature2Desc: 'تتبع استخدام الرموز والطلبات وأوقات الاستجابة في الوقت الفعلي.',
+    feature3Title: 'عزل مساحات الأسماء',
+    feature3Desc: 'مساحات أسماء مستقلة لكل مستخدم. التكوينات والإحصائيات معزولة.',
+    feature4Title: 'أداء عالي',
+    feature4Desc: 'وكيل صفر تأخير مع دعم البث. متوافق مع OpenAI SDK.',
+    feature5Title: 'تكوين مرن',
+    feature5Desc: 'إدارة تكوينات النماذج عبر واجهة الويب. دعم النموذج الافتراضي.',
+    feature6Title: 'فوترة الرموز',
+    feature6Desc: 'تتبع دقيق لاستهلاك الرموز. تقارير حسب المنصة أو النموذج.',
+    workflowTag: 'بداية سريعة',
+    workflowTitle: 'ثلاث خطوات للبدء',
+    step1Title: 'إنشاء مساحة الاسم',
+    step1Desc: 'قم بزيارة لوحة التحكم وأنشئ مساحة الاسم المخصصة للحصول على نقطة نهاية API.',
+    step2Title: 'تكوين النماذج',
+    step2Desc: 'انقر على زر Models لإضافة تكوين النموذج.',
+    step3Title: 'بدء الاستدعاء',
+    step3Desc: 'استخدم تنسيق OpenAI القياسي. يستخدم تلقائياً النموذج الافتراضي.',
+    ctaTitle: 'مستعد للبدء؟',
+    ctaDesc: 'جرب AI Gateway مجاناً وقم بتبسيط إدارة خدمات AI الخاصة بك',
+    ctaBtn: 'تشغيل لوحة التحكم'
   }
+};
+
+const langNames = {
+  zh: '中',
+  en: 'EN',
+  fr: 'FR',
+  es: 'ES',
+  ru: 'RU',
+  ar: 'ع'
 };
 
 // 主题切换
@@ -1168,13 +1407,28 @@ function updateThemeIcon() {
 }
 
 // 语言切换
-function toggleLang() {
+function toggleLangMenu() {
+  const menu = document.getElementById('langMenu');
+  menu.classList.toggle('show');
+}
+
+function setLang(lang) {
   const html = document.documentElement;
-  const currentLang = html.getAttribute('data-lang');
-  const newLang = currentLang === 'zh' ? 'en' : 'zh';
-  html.setAttribute('data-lang', newLang);
-  localStorage.setItem('lang', newLang);
+  html.setAttribute('data-lang', lang);
+  localStorage.setItem('lang', lang);
+  
+  // 设置 RTL for Arabic
+  if (lang === 'ar') {
+    html.setAttribute('dir', 'rtl');
+  } else {
+    html.removeAttribute('dir');
+  }
+  
   updateTexts();
+  updateLangDisplay();
+  
+  // 关闭菜单
+  document.getElementById('langMenu').classList.remove('show');
 }
 
 function updateTexts() {
@@ -1188,8 +1442,29 @@ function updateTexts() {
     }
   });
   
-  document.title = lang === 'zh' ? 'AI Gateway — 智能 API 网关' : 'AI Gateway — Neural API Router';
+  document.title = i18n[lang].heroLine1 + ' ' + i18n[lang].heroLine2 + ' — AI Gateway';
 }
+
+function updateLangDisplay() {
+  const lang = document.documentElement.getAttribute('data-lang');
+  document.getElementById('currentLang').textContent = langNames[lang] || lang;
+  
+  // 更新菜单中的活动状态
+  document.querySelectorAll('.lang-menu a').forEach(a => {
+    a.classList.remove('active');
+    if (a.getAttribute('onclick') === `setLang('${lang}')`) {
+      a.classList.add('active');
+    }
+  });
+}
+
+// 点击外部关闭语言菜单
+document.addEventListener('click', (e) => {
+  const dropdown = document.querySelector('.lang-dropdown');
+  if (!dropdown.contains(e.target)) {
+    document.getElementById('langMenu').classList.remove('show');
+  }
+});
 
 // 初始化
 function init() {
@@ -1199,8 +1474,14 @@ function init() {
   document.documentElement.setAttribute('data-theme', savedTheme);
   document.documentElement.setAttribute('data-lang', savedLang);
   
+  // 设置 RTL for Arabic
+  if (savedLang === 'ar') {
+    document.documentElement.setAttribute('dir', 'rtl');
+  }
+  
   updateThemeIcon();
   updateTexts();
+  updateLangDisplay();
 }
 
 // 滚动动画
