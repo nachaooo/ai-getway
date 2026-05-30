@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light" data-lang="zh">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,65 +7,51 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Outfit:wght@300;400;600;800;900&display=swap" rel="stylesheet">
 <style>
 :root {
+  --neon-cyan: #00b8d4;
+  --neon-magenta: #e91e63;
+  --neon-violet: #7c4dff;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8f9fa;
+  --bg-tertiary: #f0f1f3;
+  --surface: #ffffff;
+  --surface-hover: #f8f9fa;
+  --text-primary: #1a1a2e;
+  --text-secondary: #6b7280;
+  --text-muted: #9ca3af;
+  --border-color: rgba(0, 0, 0, 0.06);
+  --grid-color: rgba(0, 0, 0, 0.02);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="dark"] {
   --neon-cyan: #00fff2;
   --neon-magenta: #ff00e5;
   --neon-violet: #7b61ff;
-  --deep-black: #0a0a0f;
-  --surface: #12121a;
-  --surface-light: #1a1a25;
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #12121a;
+  --bg-tertiary: #1a1a25;
+  --surface: #16161f;
+  --surface-hover: #1e1e2a;
   --text-primary: #e8e8f0;
-  --text-secondary: #6b6b80;
+  --text-secondary: #8b8ba0;
+  --text-muted: #5a5a70;
+  --border-color: rgba(255, 255, 255, 0.06);
   --grid-color: rgba(100, 100, 255, 0.03);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.5);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body { 
   font-family: 'Outfit', sans-serif; 
-  background: var(--deep-black); 
+  background: var(--bg-primary); 
   color: var(--text-primary); 
   overflow-x: hidden;
-  cursor: default;
-}
-
-/* 自定义光标 */
-.cursor { 
-  position: fixed; 
-  width: 20px; 
-  height: 20px; 
-  border: 2px solid var(--neon-cyan); 
-  border-radius: 50%; 
-  pointer-events: none; 
-  z-index: 9999; 
-  transition: transform 0.15s ease, opacity 0.15s ease;
-  mix-blend-mode: difference;
-}
-.cursor-dot { 
-  position: fixed; 
-  width: 6px; 
-  height: 6px; 
-  background: var(--neon-cyan); 
-  border-radius: 50%; 
-  pointer-events: none; 
-  z-index: 9999;
-}
-
-/* 扫描线效果 */
-.scanlines { 
-  position: fixed; 
-  top: 0; 
-  left: 0; 
-  width: 100%; 
-  height: 100%; 
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0, 0, 0, 0.03) 2px,
-    rgba(0, 0, 0, 0.03) 4px
-  );
-  pointer-events: none; 
-  z-index: 100;
+  transition: background 0.4s ease, color 0.4s ease;
 }
 
 /* 网格背景 */
@@ -83,28 +69,6 @@ body {
   z-index: 0;
 }
 
-/* 噪点纹理 */
-.noise {
-  position: fixed;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
-  background: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMDAiIGhlaWdodD0iMzAwIj48ZmlsdGVyIGlkPSJhIiB4PSIwIiB5PSIwIj48ZmVUdXJidWxlbmNlIGJhc2VGcmVxdWVuY3k9Ii43NSIgc3RpdGNoVGlsZXM9InN0aXRjaCIgdHlwZT0iZnJhY3RhbE5vaXNlIi8+PGZlQ29sb3JNYXRyaXggdHlwZT0ic2F0dXJhdGUiIHZhbHVlcz0iMCIvPjwvZmlsdGVyPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbHRlcj0idXJsKCNhKSIgb3BhY2l0eT0iMC4wNSIvPjwvc3ZnPg==');
-  pointer-events: none;
-  z-index: 1;
-  animation: noise 0.5s steps(8) infinite;
-}
-
-@keyframes noise {
-  0%, 100% { transform: translate(0, 0); }
-  10% { transform: translate(-5%, -10%); }
-  30% { transform: translate(3%, -15%); }
-  50% { transform: translate(12%, 9%); }
-  70% { transform: translate(9%, 4%); }
-  90% { transform: translate(-1%, 7%); }
-}
-
 /* 导航 */
 nav {
   position: fixed;
@@ -112,40 +76,44 @@ nav {
   left: 0;
   right: 0;
   z-index: 1000;
-  padding: 24px 48px;
+  padding: 20px 48px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: linear-gradient(180deg, rgba(10,10,15,0.95) 0%, transparent 100%);
+  background: rgba(var(--bg-primary-rgb, 255, 255, 255), 0.8);
   backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border-color);
+  transition: background 0.4s ease;
+}
+
+[data-theme="dark"] nav {
+  background: rgba(10, 10, 15, 0.8);
 }
 
 .logo {
   font-family: 'Space Mono', monospace;
   font-size: 18px;
   font-weight: 700;
-  letter-spacing: 4px;
+  letter-spacing: 3px;
   text-transform: uppercase;
-  background: linear-gradient(135deg, var(--neon-cyan), var(--neon-magenta));
+  background: linear-gradient(135deg, var(--neon-cyan), var(--neon-violet));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  text-shadow: 0 0 30px rgba(0, 255, 242, 0.3);
 }
 
-.nav-right {
+.nav-center {
   display: flex;
-  align-items: center;
   gap: 32px;
 }
 
 .nav-link {
   font-family: 'Space Mono', monospace;
-  font-size: 11px;
-  letter-spacing: 2px;
+  font-size: 12px;
+  letter-spacing: 1px;
   text-transform: uppercase;
   color: var(--text-secondary);
   text-decoration: none;
-  transition: all 0.3s ease;
+  transition: color 0.3s ease;
   position: relative;
 }
 
@@ -155,36 +123,64 @@ nav {
   bottom: -4px;
   left: 0;
   width: 0;
-  height: 1px;
+  height: 2px;
   background: var(--neon-cyan);
   transition: width 0.3s ease;
 }
 
 .nav-link:hover {
-  color: var(--neon-cyan);
+  color: var(--text-primary);
 }
 
 .nav-link:hover::after {
   width: 100%;
 }
 
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* 切换按钮 */
+.toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 18px;
+}
+
+.toggle-btn:hover {
+  border-color: var(--neon-cyan);
+  color: var(--neon-cyan);
+  background: var(--surface-hover);
+}
+
 .nav-cta {
   font-family: 'Space Mono', monospace;
-  font-size: 11px;
-  letter-spacing: 2px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
   text-transform: uppercase;
-  color: var(--deep-black);
-  background: var(--neon-cyan);
+  color: #fff;
+  background: linear-gradient(135deg, var(--neon-cyan), var(--neon-violet));
   padding: 12px 24px;
   text-decoration: none;
-  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+  border-radius: 10px;
   transition: all 0.3s ease;
 }
 
 .nav-cta:hover {
-  background: var(--neon-magenta);
   transform: translateY(-2px);
-  box-shadow: 0 10px 40px rgba(255, 0, 229, 0.3);
+  box-shadow: 0 10px 30px rgba(0, 184, 212, 0.3);
 }
 
 /* Hero */
@@ -195,17 +191,17 @@ nav {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 120px 80px 80px;
+  padding: 140px 80px 100px;
   overflow: hidden;
 }
 
 .hero-content {
-  max-width: 900px;
+  max-width: 800px;
 }
 
 .hero-tag {
   font-family: 'Space Mono', monospace;
-  font-size: 12px;
+  font-size: 13px;
   letter-spacing: 4px;
   text-transform: uppercase;
   color: var(--neon-cyan);
@@ -220,7 +216,7 @@ nav {
 .hero-tag::before {
   content: '';
   width: 40px;
-  height: 1px;
+  height: 2px;
   background: var(--neon-cyan);
 }
 
@@ -230,11 +226,11 @@ nav {
 }
 
 .hero h1 {
-  font-size: clamp(48px, 8vw, 96px);
+  font-size: clamp(48px, 7vw, 80px);
   font-weight: 900;
-  line-height: 0.95;
+  line-height: 1.05;
   letter-spacing: -2px;
-  margin-bottom: 40px;
+  margin-bottom: 32px;
   opacity: 0;
   animation: slideIn 0.8s ease 0.4s forwards;
 }
@@ -243,23 +239,27 @@ nav {
   display: block;
 }
 
-.hero h1 .outline {
+.hero h1 .accent {
+  background: linear-gradient(135deg, var(--neon-cyan), var(--neon-violet), var(--neon-magenta));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+[data-theme="light"] .hero h1 .outline {
   -webkit-text-stroke: 2px var(--text-primary);
   -webkit-text-fill-color: transparent;
 }
 
-.hero h1 .glow-text {
-  background: linear-gradient(135deg, var(--neon-cyan), var(--neon-violet), var(--neon-magenta));
-  -webkit-background-clip: text;
+[data-theme="dark"] .hero h1 .outline {
+  -webkit-text-stroke: 2px var(--text-primary);
   -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 0 40px rgba(0, 255, 242, 0.3));
 }
 
 .hero-desc {
   font-size: 18px;
   color: var(--text-secondary);
   line-height: 1.7;
-  max-width: 500px;
+  max-width: 550px;
   margin-bottom: 48px;
   opacity: 0;
   animation: slideIn 0.8s ease 0.6s forwards;
@@ -273,49 +273,34 @@ nav {
   animation: slideIn 0.8s ease 0.8s forwards;
 }
 
-.btn-neon {
+.btn-primary {
   font-family: 'Space Mono', monospace;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
-  letter-spacing: 2px;
+  letter-spacing: 1px;
   text-transform: uppercase;
   padding: 18px 36px;
-  background: transparent;
-  color: var(--neon-cyan);
-  border: 2px solid var(--neon-cyan);
+  background: linear-gradient(135deg, var(--neon-cyan), var(--neon-violet));
+  color: #fff;
+  border: none;
+  border-radius: 12px;
   cursor: pointer;
-  position: relative;
-  overflow: hidden;
-  transition: all 0.4s ease;
+  transition: all 0.3s ease;
   text-decoration: none;
-  clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px));
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.btn-neon::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(0, 255, 242, 0.2), transparent);
-  transition: left 0.5s ease;
+.btn-primary:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 20px 40px rgba(0, 184, 212, 0.3);
 }
 
-.btn-neon:hover::before {
-  left: 100%;
-}
-
-.btn-neon:hover {
-  background: var(--neon-cyan);
-  color: var(--deep-black);
-  box-shadow: 0 0 40px rgba(0, 255, 242, 0.3), inset 0 0 40px rgba(0, 255, 242, 0.1);
-}
-
-.btn-ghost {
+.btn-secondary {
   font-family: 'Space Mono', monospace;
-  font-size: 13px;
-  letter-spacing: 2px;
+  font-size: 14px;
+  letter-spacing: 1px;
   text-transform: uppercase;
   color: var(--text-secondary);
   text-decoration: none;
@@ -323,41 +308,46 @@ nav {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 18px 0;
 }
 
-.btn-ghost:hover {
-  color: var(--neon-magenta);
+.btn-secondary:hover {
+  color: var(--neon-cyan);
 }
 
-.btn-ghost svg {
+.btn-secondary svg {
   transition: transform 0.3s ease;
 }
 
-.btn-ghost:hover svg {
+.btn-secondary:hover svg {
   transform: translateX(4px);
 }
 
 /* Hero 右侧装饰 */
 .hero-visual {
   position: absolute;
-  right: -100px;
+  right: -50px;
   top: 50%;
   transform: translateY(-50%);
-  width: 600px;
-  height: 600px;
+  width: 500px;
+  height: 500px;
+  opacity: 0.1;
+}
+
+[data-theme="dark"] .hero-visual {
   opacity: 0.15;
 }
 
 .orbit {
   position: absolute;
-  border: 1px solid rgba(0, 255, 242, 0.2);
+  border: 1px solid var(--neon-cyan);
   border-radius: 50%;
   animation: spin linear infinite;
 }
 
-.orbit-1 { width: 400px; height: 400px; top: 100px; left: 100px; animation-duration: 20s; }
-.orbit-2 { width: 500px; height: 500px; top: 50px; left: 50px; animation-duration: 30s; animation-direction: reverse; }
-.orbit-3 { width: 600px; height: 600px; top: 0; left: 0; animation-duration: 40s; }
+.orbit-1 { width: 300px; height: 300px; top: 100px; left: 100px; animation-duration: 20s; }
+.orbit-2 { width: 400px; height: 400px; top: 50px; left: 50px; animation-duration: 30s; animation-direction: reverse; }
+.orbit-3 { width: 500px; height: 500px; top: 0; left: 0; animation-duration: 40s; }
 
 .orbit-dot {
   position: absolute;
@@ -375,19 +365,19 @@ nav {
   to { transform: rotate(360deg); }
 }
 
-/* 代码终端 */
+/* 终端 */
 .terminal {
   position: absolute;
   right: 80px;
-  bottom: 80px;
-  width: 450px;
-  background: var(--surface);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 12px;
+  bottom: 60px;
+  width: 420px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
   overflow: hidden;
   opacity: 0;
   animation: fadeIn 1s ease 1s forwards;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
 }
 
 @keyframes fadeIn {
@@ -400,13 +390,13 @@ nav {
   align-items: center;
   gap: 8px;
   padding: 16px 20px;
-  background: var(--surface-light);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .terminal-dot {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
 }
 
@@ -416,8 +406,8 @@ nav {
 
 .terminal-title {
   font-family: 'Space Mono', monospace;
-  font-size: 11px;
-  color: var(--text-secondary);
+  font-size: 12px;
+  color: var(--text-muted);
   margin-left: 8px;
 }
 
@@ -433,149 +423,19 @@ nav {
   gap: 8px;
 }
 
-.terminal-prompt {
-  color: var(--neon-cyan);
-}
+.terminal-prompt { color: var(--neon-cyan); }
+.terminal-command { color: var(--text-primary); }
+.terminal-comment { color: var(--text-muted); }
+.terminal-string { color: var(--neon-violet); }
 
-.terminal-command {
-  color: var(--text-primary);
-}
-
-.terminal-comment {
-  color: var(--text-secondary);
-}
-
-.terminal-string {
-  color: #a78bfa;
-}
-
-.terminal-url {
-  color: var(--neon-magenta);
-}
-
-/* 特性区域 */
-.features {
-  position: relative;
-  z-index: 10;
-  padding: 160px 80px;
-}
-
-.features-header {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 80px;
-  margin-bottom: 120px;
-  align-items: end;
-}
-
-.features-tag {
-  font-family: 'Space Mono', monospace;
-  font-size: 12px;
-  letter-spacing: 4px;
-  text-transform: uppercase;
-  color: var(--neon-violet);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 24px;
-}
-
-.features-tag::before {
-  content: '';
-  width: 40px;
-  height: 1px;
-  background: var(--neon-violet);
-}
-
-.features h2 {
-  font-size: 56px;
-  font-weight: 800;
-  line-height: 1.1;
-  letter-spacing: -1px;
-}
-
-.features-desc {
-  font-size: 16px;
-  color: var(--text-secondary);
-  line-height: 1.8;
-}
-
-.features-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 2px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.03);
-}
-
-.feature-card {
-  background: var(--deep-black);
-  padding: 48px 40px;
-  position: relative;
-  overflow: hidden;
-  transition: all 0.5s ease;
-  cursor: default;
-}
-
-.feature-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--card-accent), transparent);
-  opacity: 0;
-  transition: opacity 0.5s ease;
-}
-
-.feature-card:hover {
-  background: var(--surface);
-}
-
-.feature-card:hover::before {
-  opacity: 1;
-}
-
-.feature-number {
-  font-family: 'Space Mono', monospace;
-  font-size: 11px;
-  color: var(--card-accent);
-  margin-bottom: 24px;
-  opacity: 0.5;
-}
-
-.feature-icon {
-  font-size: 32px;
-  margin-bottom: 24px;
-  display: inline-block;
-  transition: transform 0.3s ease;
-}
-
-.feature-card:hover .feature-icon {
-  transform: scale(1.1) rotate(-5deg);
-}
-
-.feature-card h3 {
-  font-size: 20px;
-  font-weight: 600;
-  margin-bottom: 16px;
-}
-
-.feature-card p {
-  font-size: 14px;
-  color: var(--text-secondary);
-  line-height: 1.7;
-}
-
-/* 统计区域 */
+/* 统计 */
 .stats {
   position: relative;
   z-index: 10;
-  padding: 120px 80px;
-  background: var(--surface);
-  border-top: 1px solid rgba(255, 255, 255, 0.03);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  padding: 100px 80px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .stats-grid {
@@ -589,21 +449,15 @@ nav {
 .stat-item {
   text-align: center;
   padding: 40px;
-  position: relative;
+  background: var(--surface);
+  border-radius: 16px;
+  border: 1px solid var(--border-color);
+  transition: all 0.3s ease;
 }
 
-.stat-item::after {
-  content: '';
-  position: absolute;
-  right: 0;
-  top: 20%;
-  height: 60%;
-  width: 1px;
-  background: rgba(255, 255, 255, 0.05);
-}
-
-.stat-item:last-child::after {
-  display: none;
+.stat-item:hover {
+  transform: translateY(-5px);
+  box-shadow: var(--shadow-md);
 }
 
 .stat-value {
@@ -621,21 +475,113 @@ nav {
   color: var(--text-secondary);
 }
 
-/* 流程区域 */
+/* 特性 */
+.features {
+  position: relative;
+  z-index: 10;
+  padding: 120px 80px;
+}
+
+.features-header {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 80px;
+  margin-bottom: 80px;
+  align-items: end;
+}
+
+.features-tag {
+  font-family: 'Space Mono', monospace;
+  font-size: 13px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: var(--neon-violet);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.features-tag::before {
+  content: '';
+  width: 40px;
+  height: 2px;
+  background: var(--neon-violet);
+}
+
+.features h2 {
+  font-size: 48px;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -1px;
+}
+
+.features-desc {
+  font-size: 16px;
+  color: var(--text-secondary);
+  line-height: 1.8;
+}
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+.feature-card {
+  background: var(--surface);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  padding: 40px 32px;
+  transition: all 0.4s ease;
+  cursor: default;
+}
+
+.feature-card:hover {
+  transform: translateY(-8px);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--neon-cyan);
+}
+
+.feature-icon {
+  font-size: 40px;
+  margin-bottom: 24px;
+  display: inline-block;
+  transition: transform 0.3s ease;
+}
+
+.feature-card:hover .feature-icon {
+  transform: scale(1.1) rotate(-5deg);
+}
+
+.feature-card h3 {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.feature-card p {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+/* 流程 */
 .workflow {
   position: relative;
   z-index: 10;
-  padding: 160px 80px;
+  padding: 120px 80px;
+  background: var(--bg-secondary);
 }
 
 .workflow-header {
   text-align: center;
-  margin-bottom: 120px;
+  margin-bottom: 80px;
 }
 
 .workflow-tag {
   font-family: 'Space Mono', monospace;
-  font-size: 12px;
+  font-size: 13px;
   letter-spacing: 4px;
   text-transform: uppercase;
   color: var(--neon-magenta);
@@ -650,12 +596,12 @@ nav {
 .workflow-tag::after {
   content: '';
   width: 40px;
-  height: 1px;
+  height: 2px;
   background: var(--neon-magenta);
 }
 
 .workflow h2 {
-  font-size: 56px;
+  font-size: 48px;
   font-weight: 800;
   letter-spacing: -1px;
 }
@@ -665,7 +611,7 @@ nav {
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 80px;
+  gap: 60px;
 }
 
 .workflow-step {
@@ -673,21 +619,32 @@ nav {
   grid-template-columns: 80px 1fr 1fr;
   gap: 40px;
   align-items: start;
+  background: var(--surface);
+  padding: 40px;
+  border-radius: 20px;
+  border: 1px solid var(--border-color);
+  transition: all 0.3s ease;
+}
+
+.workflow-step:hover {
+  transform: translateX(10px);
+  border-color: var(--neon-cyan);
 }
 
 .step-num {
   font-family: 'Space Mono', monospace;
-  font-size: 64px;
+  font-size: 56px;
   font-weight: 700;
-  -webkit-text-stroke: 2px var(--neon-cyan);
+  background: linear-gradient(135deg, var(--neon-cyan), var(--neon-violet));
+  -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   line-height: 1;
 }
 
 .step-content h3 {
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 600;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .step-content p {
@@ -697,10 +654,10 @@ nav {
 }
 
 .step-code {
-  background: var(--surface);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
-  padding: 24px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 20px;
   font-family: 'Space Mono', monospace;
   font-size: 13px;
   line-height: 1.8;
@@ -716,7 +673,7 @@ nav {
 .cta {
   position: relative;
   z-index: 10;
-  padding: 160px 80px;
+  padding: 120px 80px;
   text-align: center;
   overflow: hidden;
 }
@@ -727,14 +684,14 @@ nav {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 600px;
-  height: 600px;
-  background: radial-gradient(circle, rgba(0, 255, 242, 0.1) 0%, transparent 70%);
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(0, 184, 212, 0.08) 0%, transparent 70%);
   pointer-events: none;
 }
 
 .cta h2 {
-  font-size: 64px;
+  font-size: 56px;
   font-weight: 900;
   letter-spacing: -2px;
   margin-bottom: 24px;
@@ -756,14 +713,15 @@ footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-top: 1px solid rgba(255, 255, 255, 0.03);
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
 }
 
 footer p {
   font-family: 'Space Mono', monospace;
-  font-size: 11px;
-  color: var(--text-secondary);
-  letter-spacing: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
 }
 
 footer a {
@@ -774,7 +732,7 @@ footer a {
 /* 响应式 */
 @media (max-width: 1024px) {
   .hero { padding: 120px 40px 80px; }
-  .features { padding: 100px 40px; }
+  .features { padding: 80px 40px; }
   .features-header { grid-template-columns: 1fr; gap: 40px; }
   .features-grid { grid-template-columns: repeat(2, 1fr); }
   .workflow-step { grid-template-columns: 60px 1fr; }
@@ -785,69 +743,70 @@ footer a {
 
 @media (max-width: 768px) {
   nav { padding: 16px 24px; }
-  .nav-link { display: none; }
+  .nav-center { display: none; }
   .hero { padding: 100px 24px 60px; }
-  .hero h1 { font-size: 40px; }
-  .features { padding: 80px 24px; }
+  .hero h1 { font-size: 36px; }
+  .features { padding: 60px 24px; }
   .features-grid { grid-template-columns: 1fr; }
-  .stats { padding: 80px 24px; }
+  .stats { padding: 60px 24px; }
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
-  .workflow { padding: 80px 24px; }
-  .workflow-step { grid-template-columns: 1fr; }
-  .step-num { font-size: 48px; }
+  .workflow { padding: 60px 24px; }
+  .workflow-step { grid-template-columns: 1fr; gap: 20px; }
+  .step-num { font-size: 40px; }
   .step-code { grid-column: 1; }
-  .cta { padding: 80px 24px; }
-  .cta h2 { font-size: 36px; }
+  .cta { padding: 60px 24px; }
+  .cta h2 { font-size: 32px; }
   footer { flex-direction: column; gap: 16px; padding: 24px; text-align: center; }
 }
 </style>
 </head>
 <body>
 
-<!-- 自定义光标 -->
-<div class="cursor" id="cursor"></div>
-<div class="cursor-dot" id="cursorDot"></div>
-
-<!-- 扫描线 -->
-<div class="scanlines"></div>
-
 <!-- 网格背景 -->
 <div class="grid-bg"></div>
-
-<!-- 噪点 -->
-<div class="noise"></div>
 
 <!-- 导航 -->
 <nav>
   <div class="logo">AI Gateway</div>
+  <div class="nav-center">
+    <a href="#features" class="nav-link" data-i18n="navFeatures">功能</a>
+    <a href="#workflow" class="nav-link" data-i18n="navWorkflow">流程</a>
+    <a href="/dashboard" class="nav-link" data-i18n="navDashboard">控制台</a>
+  </div>
   <div class="nav-right">
-    <a href="#features" class="nav-link">Features</a>
-    <a href="#workflow" class="nav-link">Workflow</a>
-    <a href="/dashboard" class="nav-link">Dashboard</a>
-    <a href="/dashboard" class="nav-cta">Launch App</a>
+    <button class="toggle-btn" id="langBtn" onclick="toggleLang()" title="切换语言">
+      <span id="langIcon">EN</span>
+    </button>
+    <button class="toggle-btn" id="themeBtn" onclick="toggleTheme()" title="切换主题">
+      <span id="themeIcon">🌙</span>
+    </button>
+    <a href="/dashboard" class="nav-cta" data-i18n="navStart">开始使用</a>
   </div>
 </nav>
 
 <!-- Hero -->
 <section class="hero">
   <div class="hero-content">
-    <div class="hero-tag">Neural API Router</div>
+    <div class="hero-tag" data-i18n="heroTag">智能 API 网关</div>
     <h1>
-      <span class="line outline">Unified</span>
-      <span class="line"><span class="glow-text">AI Model</span></span>
-      <span class="line">Interface</span>
+      <span class="line" data-i18n="heroLine1">统一管理</span>
+      <span class="line"><span class="accent" data-i18n="heroLine2">AI 模型</span></span>
+      <span class="line" data-i18n="heroLine3">接口</span>
     </h1>
-    <p class="hero-desc">
-      A lightweight, high-performance API gateway for AI models. 
-      Multi-model routing, namespace isolation, real-time monitoring — 
-      all in one elegant solution.
+    <p class="hero-desc" data-i18n="heroDesc">
+      轻量级、高性能的 AI API 网关。支持多模型路由、命名空间隔离、实时用量监控，让 AI 服务管理更简单。
     </p>
     <div class="hero-actions">
-      <a href="/dashboard" class="btn-neon">Get Started</a>
-      <a href="#features" class="btn-ghost">
-        Explore Features
+      <a href="/dashboard" class="btn-primary">
+        <span data-i18n="heroBtnStart">免费使用</span>
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <path d="M3 8H13M13 8L9 4M13 8L9 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M3 8H13M13 8L9 4M13 8L9 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </a>
+      <a href="#features" class="btn-secondary">
+        <span data-i18n="heroBtnLearn">了解更多</span>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M8 3V13M8 13L12 9M8 13L4 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </a>
     </div>
@@ -870,7 +829,7 @@ footer a {
     </div>
     <div class="terminal-body">
       <div class="terminal-line">
-        <span class="terminal-comment"># Proxy request via gateway</span>
+        <span class="terminal-comment"># 通过网关代理请求</span>
       </div>
       <div class="terminal-line">
         <span class="terminal-prompt">$</span>
@@ -883,7 +842,7 @@ footer a {
         <span class="terminal-command">&nbsp;&nbsp;-d <span class="terminal-string">'{"model":"gpt-4"}'</span></span>
       </div>
       <div class="terminal-line" style="margin-top: 12px;">
-        <span class="terminal-comment"># Response: 200 OK (42ms)</span>
+        <span class="terminal-comment"># 响应: 200 OK (42ms)</span>
       </div>
     </div>
   </div>
@@ -894,19 +853,19 @@ footer a {
   <div class="stats-grid">
     <div class="stat-item">
       <div class="stat-value">10K+</div>
-      <div class="stat-label">Daily Requests</div>
+      <div class="stat-label" data-i18n="statRequests">日均请求</div>
     </div>
     <div class="stat-item">
       <div class="stat-value">&lt;50ms</div>
-      <div class="stat-label">Avg Latency</div>
+      <div class="stat-label" data-i18n="statLatency">平均延迟</div>
     </div>
     <div class="stat-item">
       <div class="stat-value">99.9%</div>
-      <div class="stat-label">Uptime</div>
+      <div class="stat-label" data-i18n="statUptime">可用性</div>
     </div>
     <div class="stat-item">
       <div class="stat-value">10+</div>
-      <div class="stat-label">Models Supported</div>
+      <div class="stat-label" data-i18n="statModels">支持模型</div>
     </div>
   </div>
 </section>
@@ -915,56 +874,49 @@ footer a {
 <section class="features" id="features">
   <div class="features-header">
     <div>
-      <div class="features-tag">Core Features</div>
-      <h2>Why Choose<br>AI Gateway</h2>
+      <div class="features-tag" data-i18n="featuresTag">核心功能</div>
+      <h2 data-i18n="featuresTitle">为什么选择<br>AI Gateway</h2>
     </div>
-    <div class="features-desc">
-      A comprehensive solution for managing AI API endpoints. 
-      Built for developers who demand performance, flexibility, and simplicity.
+    <div class="features-desc" data-i18n="featuresDesc">
+      全面的 AI API 端点管理解决方案。为追求性能、灵活性和简洁性的开发者而生。
     </div>
   </div>
   
   <div class="features-grid">
-    <div class="feature-card" style="--card-accent: var(--neon-cyan);">
-      <div class="feature-number">01</div>
+    <div class="feature-card">
       <div class="feature-icon">🔀</div>
-      <h3>Smart Routing</h3>
-      <p>Route requests to different upstream services based on namespace. Each user can configure independent models and endpoints.</p>
+      <h3 data-i18n="feature1Title">智能路由</h3>
+      <p data-i18n="feature1Desc">按命名空间路由到不同的上游服务，每个用户可独立配置模型和端点。</p>
     </div>
     
-    <div class="feature-card" style="--card-accent: var(--neon-violet);">
-      <div class="feature-number">02</div>
+    <div class="feature-card">
       <div class="feature-icon">📊</div>
-      <h3>Real-time Analytics</h3>
-      <p>Track token usage, request counts, and response times in real-time. Multi-dimensional data analysis with visual dashboards.</p>
+      <h3 data-i18n="feature2Title">实时监控</h3>
+      <p data-i18n="feature2Desc">实时追踪 Token 用量、请求次数、响应速度，支持多维度数据分析。</p>
     </div>
     
-    <div class="feature-card" style="--card-accent: var(--neon-magenta);">
-      <div class="feature-number">03</div>
+    <div class="feature-card">
       <div class="feature-icon">🔒</div>
-      <h3>Namespace Isolation</h3>
-      <p>Independent namespaces for each user. Model configurations, API keys, and usage statistics are completely isolated.</p>
+      <h3 data-i18n="feature3Title">命名空间隔离</h3>
+      <p data-i18n="feature3Desc">每个用户独立的命名空间，模型配置、API 密钥、用量统计完全隔离。</p>
     </div>
     
-    <div class="feature-card" style="--card-accent: #22c55e;">
-      <div class="feature-number">04</div>
+    <div class="feature-card">
       <div class="feature-icon">⚡</div>
-      <h3>High Performance</h3>
-      <p>Zero-latency proxy with streaming support. Fully compatible with OpenAI SDK and other mainstream clients.</p>
+      <h3 data-i18n="feature4Title">高性能代理</h3>
+      <p data-i18n="feature4Desc">零延迟转发，支持流式响应，完美兼容 OpenAI SDK 和主流客户端。</p>
     </div>
     
-    <div class="feature-card" style="--card-accent: #f59e0b;">
-      <div class="feature-number">05</div>
+    <div class="feature-card">
       <div class="feature-icon">🔧</div>
-      <h3>Flexible Config</h3>
-      <p>Manage model configurations via web interface. Support default model settings without code changes.</p>
+      <h3 data-i18n="feature5Title">灵活配置</h3>
+      <p data-i18n="feature5Desc">通过 Web 界面管理模型配置，支持默认模型设置，无需修改代码。</p>
     </div>
     
-    <div class="feature-card" style="--card-accent: #ef4444;">
-      <div class="feature-number">06</div>
+    <div class="feature-card">
       <div class="feature-icon">📈</div>
-      <h3>Token Billing</h3>
-      <p>Precise token consumption tracking for each model. View usage reports by platform or by model.</p>
+      <h3 data-i18n="feature6Title">Token 计费</h3>
+      <p data-i18n="feature6Desc">精确统计每个模型的 Token 消耗，支持按平台、按模型查看用量报告。</p>
     </div>
   </div>
 </section>
@@ -972,16 +924,16 @@ footer a {
 <!-- 流程 -->
 <section class="workflow" id="workflow">
   <div class="workflow-header">
-    <div class="workflow-tag">Quick Start</div>
-    <h2>Three Steps to Begin</h2>
+    <div class="workflow-tag" data-i18n="workflowTag">快速开始</div>
+    <h2 data-i18n="workflowTitle">三步开始使用</h2>
   </div>
   
   <div class="workflow-steps">
     <div class="workflow-step">
       <div class="step-num">01</div>
       <div class="step-content">
-        <h3>Create Namespace</h3>
-        <p>Visit the console and create your dedicated namespace to get an independent API endpoint.</p>
+        <h3 data-i18n="step1Title">创建命名空间</h3>
+        <p data-i18n="step1Desc">访问控制台，创建你的专属命名空间，获得独立的 API 端点。</p>
       </div>
       <div class="step-code">
         https://gateway.tech/<span class="highlight">your-namespace</span>/v1/chat/completions
@@ -991,8 +943,8 @@ footer a {
     <div class="workflow-step">
       <div class="step-num">02</div>
       <div class="step-content">
-        <h3>Configure Models</h3>
-        <p>Click the Models button in the top right corner to add your model configuration (API Base URL and API Key).</p>
+        <h3 data-i18n="step2Title">配置模型</h3>
+        <p data-i18n="step2Desc">点击右上角 Models 按钮，添加模型配置（API Base URL 和 API Key）。</p>
       </div>
       <div class="step-code">
         Model: <span class="highlight">gpt-4</span><br>
@@ -1003,8 +955,8 @@ footer a {
     <div class="workflow-step">
       <div class="step-num">03</div>
       <div class="step-content">
-        <h3>Start Calling</h3>
-        <p>Use standard OpenAI format to make requests. No need to specify the by parameter — it automatically uses the default model.</p>
+        <h3 data-i18n="step3Title">开始调用</h3>
+        <p data-i18n="step3Desc">使用标准 OpenAI 格式调用，无需指定 by 参数，自动使用默认模型。</p>
       </div>
       <div class="step-code">
         <span class="highlight">POST</span> /your-namespace/v1/chat/completions<br>
@@ -1016,9 +968,12 @@ footer a {
 
 <!-- CTA -->
 <section class="cta">
-  <h2>Ready to Start?</h2>
-  <p>Experience AI Gateway and simplify your AI service management</p>
-  <a href="/dashboard" class="btn-neon" style="display: inline-block;">Launch Dashboard →</a>
+  <h2 data-i18n="ctaTitle">准备好开始了吗？</h2>
+  <p data-i18n="ctaDesc">免费体验 AI Gateway，简化你的 AI 服务管理</p>
+  <a href="/dashboard" class="btn-primary" style="display: inline-flex;">
+    <span data-i18n="ctaBtn">立即使用</span>
+    <span>→</span>
+  </a>
 </section>
 
 <!-- 页脚 -->
@@ -1028,37 +983,154 @@ footer a {
 </footer>
 
 <script>
-// 自定义光标
-const cursor = document.getElementById('cursor');
-const cursorDot = document.getElementById('cursorDot');
+// 国际化文本
+const i18n = {
+  zh: {
+    navFeatures: '功能',
+    navWorkflow: '流程',
+    navDashboard: '控制台',
+    navStart: '开始使用',
+    heroTag: '智能 API 网关',
+    heroLine1: '统一管理',
+    heroLine2: 'AI 模型',
+    heroLine3: '接口',
+    heroDesc: '轻量级、高性能的 AI API 网关。支持多模型路由、命名空间隔离、实时用量监控，让 AI 服务管理更简单。',
+    heroBtnStart: '免费使用',
+    heroBtnLearn: '了解更多',
+    statRequests: '日均请求',
+    statLatency: '平均延迟',
+    statUptime: '可用性',
+    statModels: '支持模型',
+    featuresTag: '核心功能',
+    featuresTitle: '为什么选择<br>AI Gateway',
+    featuresDesc: '全面的 AI API 端点管理解决方案。为追求性能、灵活性和简洁性的开发者而生。',
+    feature1Title: '智能路由',
+    feature1Desc: '按命名空间路由到不同的上游服务，每个用户可独立配置模型和端点。',
+    feature2Title: '实时监控',
+    feature2Desc: '实时追踪 Token 用量、请求次数、响应速度，支持多维度数据分析。',
+    feature3Title: '命名空间隔离',
+    feature3Desc: '每个用户独立的命名空间，模型配置、API 密钥、用量统计完全隔离。',
+    feature4Title: '高性能代理',
+    feature4Desc: '零延迟转发，支持流式响应，完美兼容 OpenAI SDK 和主流客户端。',
+    feature5Title: '灵活配置',
+    feature5Desc: '通过 Web 界面管理模型配置，支持默认模型设置，无需修改代码。',
+    feature6Title: 'Token 计费',
+    feature6Desc: '精确统计每个模型的 Token 消耗，支持按平台、按模型查看用量报告。',
+    workflowTag: '快速开始',
+    workflowTitle: '三步开始使用',
+    step1Title: '创建命名空间',
+    step1Desc: '访问控制台，创建你的专属命名空间，获得独立的 API 端点。',
+    step2Title: '配置模型',
+    step2Desc: '点击右上角 Models 按钮，添加模型配置（API Base URL 和 API Key）。',
+    step3Title: '开始调用',
+    step3Desc: '使用标准 OpenAI 格式调用，无需指定 by 参数，自动使用默认模型。',
+    ctaTitle: '准备好开始了吗？',
+    ctaDesc: '免费体验 AI Gateway，简化你的 AI 服务管理',
+    ctaBtn: '立即使用 →'
+  },
+  en: {
+    navFeatures: 'Features',
+    navWorkflow: 'Workflow',
+    navDashboard: 'Dashboard',
+    navStart: 'Get Started',
+    heroTag: 'Neural API Router',
+    heroLine1: 'Unified',
+    heroLine2: 'AI Model',
+    heroLine3: 'Interface',
+    heroDesc: 'A lightweight, high-performance API gateway for AI models. Multi-model routing, namespace isolation, real-time monitoring — all in one elegant solution.',
+    heroBtnStart: 'Get Started',
+    heroBtnLearn: 'Learn More',
+    statRequests: 'Daily Requests',
+    statLatency: 'Avg Latency',
+    statUptime: 'Uptime',
+    statModels: 'Models Supported',
+    featuresTag: 'Core Features',
+    featuresTitle: 'Why Choose<br>AI Gateway',
+    featuresDesc: 'A comprehensive solution for managing AI API endpoints. Built for developers who demand performance, flexibility, and simplicity.',
+    feature1Title: 'Smart Routing',
+    feature1Desc: 'Route requests to different upstream services based on namespace. Each user can configure independent models and endpoints.',
+    feature2Title: 'Real-time Analytics',
+    feature2Desc: 'Track token usage, request counts, and response times in real-time. Multi-dimensional data analysis with visual dashboards.',
+    feature3Title: 'Namespace Isolation',
+    feature3Desc: 'Independent namespaces for each user. Model configurations, API keys, and usage statistics are completely isolated.',
+    feature4Title: 'High Performance',
+    feature4Desc: 'Zero-latency proxy with streaming support. Fully compatible with OpenAI SDK and other mainstream clients.',
+    feature5Title: 'Flexible Config',
+    feature5Desc: 'Manage model configurations via web interface. Support default model settings without code changes.',
+    feature6Title: 'Token Billing',
+    feature6Desc: 'Precise token consumption tracking for each model. View usage reports by platform or by model.',
+    workflowTag: 'Quick Start',
+    workflowTitle: 'Three Steps to Begin',
+    step1Title: 'Create Namespace',
+    step1Desc: 'Visit the console and create your dedicated namespace to get an independent API endpoint.',
+    step2Title: 'Configure Models',
+    step2Desc: 'Click the Models button in the top right corner to add your model configuration (API Base URL and API Key).',
+    step3Title: 'Start Calling',
+    step3Desc: 'Use standard OpenAI format to make requests. No need to specify the by parameter — it automatically uses the default model.',
+    ctaTitle: 'Ready to Start?',
+    ctaDesc: 'Experience AI Gateway and simplify your AI service management',
+    ctaBtn: 'Launch Dashboard →'
+  }
+};
 
-document.addEventListener('mousemove', (e) => {
-  cursor.style.left = e.clientX - 10 + 'px';
-  cursor.style.top = e.clientY - 10 + 'px';
-  cursorDot.style.left = e.clientX - 3 + 'px';
-  cursorDot.style.top = e.clientY - 3 + 'px';
-});
+// 主题切换
+function toggleTheme() {
+  const html = document.documentElement;
+  const currentTheme = html.getAttribute('data-theme');
+  const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', newTheme);
+  localStorage.setItem('theme', newTheme);
+  updateThemeIcon();
+}
 
-document.addEventListener('mousedown', () => {
-  cursor.style.transform = 'scale(0.8)';
-});
+function updateThemeIcon() {
+  const theme = document.documentElement.getAttribute('data-theme');
+  document.getElementById('themeIcon').textContent = theme === 'dark' ? '☀️' : '🌙';
+}
 
-document.addEventListener('mouseup', () => {
-  cursor.style.transform = 'scale(1)';
-});
+// 语言切换
+function toggleLang() {
+  const html = document.documentElement;
+  const currentLang = html.getAttribute('data-lang');
+  const newLang = currentLang === 'zh' ? 'en' : 'zh';
+  html.setAttribute('data-lang', newLang);
+  localStorage.setItem('lang', newLang);
+  updateTexts();
+  updateLangIcon();
+}
 
-// 为可交互元素添加 hover 效果
-const interactiveElements = document.querySelectorAll('a, button, .feature-card');
-interactiveElements.forEach(el => {
-  el.addEventListener('mouseenter', () => {
-    cursor.style.transform = 'scale(1.5)';
-    cursor.style.borderColor = 'var(--neon-magenta)';
+function updateTexts() {
+  const lang = document.documentElement.getAttribute('data-lang');
+  const texts = i18n[lang];
+  
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    if (texts[key]) {
+      el.innerHTML = texts[key];
+    }
   });
-  el.addEventListener('mouseleave', () => {
-    cursor.style.transform = 'scale(1)';
-    cursor.style.borderColor = 'var(--neon-cyan)';
-  });
-});
+  
+  document.title = lang === 'zh' ? 'AI Gateway — 智能 API 网关' : 'AI Gateway — Neural API Router';
+}
+
+function updateLangIcon() {
+  const lang = document.documentElement.getAttribute('data-lang');
+  document.getElementById('langIcon').textContent = lang === 'zh' ? 'EN' : '中';
+}
+
+// 初始化
+function init() {
+  // 从 localStorage 读取设置
+  const savedTheme = localStorage.getItem('theme') || 'light';
+  const savedLang = localStorage.getItem('lang') || 'zh';
+  
+  document.documentElement.setAttribute('data-theme', savedTheme);
+  document.documentElement.setAttribute('data-lang', savedLang);
+  
+  updateThemeIcon();
+  updateLangIcon();
+  updateTexts();
+}
 
 // 滚动动画
 const observerOptions = {
@@ -1075,7 +1147,6 @@ const observer = new IntersectionObserver((entries) => {
   });
 }, observerOptions);
 
-// 观察特性卡片
 document.querySelectorAll('.feature-card, .workflow-step, .stat-item').forEach((el, index) => {
   el.style.opacity = '0';
   el.style.transform = 'translateY(30px)';
@@ -1098,7 +1169,6 @@ function animateValue(element, start, end, duration, suffix = '') {
   window.requestAnimationFrame(step);
 }
 
-// 统计数字动画
 const statsObserver = new IntersectionObserver((entries) => {
   entries.forEach(entry => {
     if (entry.isIntersecting) {
@@ -1107,10 +1177,6 @@ const statsObserver = new IntersectionObserver((entries) => {
       
       if (text.includes('K+')) {
         animateValue(element, 0, 10, 2000, 'K+');
-      } else if (text.includes('<')) {
-        element.textContent = '<50ms';
-      } else if (text.includes('%')) {
-        animateValue(element, 0, 99.9, 2000, '%');
       } else if (text.includes('+')) {
         animateValue(element, 0, 10, 1500, '+');
       }
@@ -1137,6 +1203,9 @@ document.querySelectorAll('a[href^="#"]').forEach(anchor => {
     }
   });
 });
+
+// 初始化
+init();
 </script>
 </body>
 </html>
