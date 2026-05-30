@@ -622,10 +622,15 @@ def set_default_model(scope, model_id):
 
 
 @app.route("/")
+def landing():
+    return render_template("landing.html")
+
+
+@app.route("/dashboard")
 @app.route("/<scope>")
 def dashboard(scope=None):
-    # 排除 API 路径
-    if scope and scope.startswith('api'):
+    # 排除 API 路径和其他静态资源
+    if scope and (scope.startswith('api') or scope.startswith('static') or scope == 'favicon.ico'):
         return jsonify({"error": "Not found"}), 404
     return render_template("index.html", scope=scope or "")
 
