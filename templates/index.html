@@ -933,7 +933,7 @@ function loadModalModels(scope) {
         const isDefault = m.is_default ? '✓' : '';
         html += `<tr>
           <td style="color:var(--heading)">${m.model}</td>
-          <td title="${m.api_base}">${m.api_base.length > 35 ? m.api_base.substring(0, 35) + '...' : m.api_base}</td>
+          <td style="word-break:break-all;font-size:11px;">${m.api_base}</td>
           <td style="text-align:center">${isDefault ? '<span style="color:#22c55e;font-weight:bold;">✓ 默认</span>' : '<button onclick="setDefaultFromModal(' + m.id + ')" style="background:none;border:none;color:var(--link);cursor:pointer;font-size:11px;">设为默认</button>'}</td>
           <td style="text-align:right"><button onclick="deleteModelFromModal(${m.id})" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:11px;">删除</button></td>
         </tr>`;
