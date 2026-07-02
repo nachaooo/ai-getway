@@ -93,6 +93,32 @@ Output: `dist/AI Gateway vX.Y.Z.exe` (~26 MB, single file, no console window).
 
 > **Note**: `build.vbs` automatically increments the patch version (e.g. 0.6.0 → 0.6.1) in `app.py` before building.
 
+**Build for macOS:**
+
+PyInstaller does not support cross-compilation — you must build on a Mac. The current codebase has Windows-only code (`winreg`, `.lnk` shortcuts, `CREATE_NO_WINDOW`, `%APPDATA%` paths) in `main.py`, so the tray launcher will not work as-is. To build a Mac version:
+
+1. Clone the repo on a Mac:
+   ```bash
+   git clone https://gitee.com/nachao/ai-getway.git
+   cd ai-getway
+   python3 -m venv venv && source venv/bin/activate
+   pip install -r requirements.txt pyinstaller
+   ```
+2. Adapt `main.py` for macOS (remove `winreg`/`CREATE_NO_WINDOW`, replace Startup `.lnk` with a `~/Library/LaunchAgents/*.plist`), or run `app.py` directly (no tray).
+3. Convert `static/icon.png` to `.icns`:
+   ```bash
+   mkdir icon.iconset
+   for s in 16 32 128 256 512; do sips -z $s $s static/icon.png --out icon.iconset/icon_${s}x${s}.png; done
+   iconutil -c icns icon.iconset -o static/icon.icns
+   ```
+4. Copy `AI Gateway.spec` to a Mac variant, change `icon=['static\\icon.ico']` → `icon=['static/icon.icns']`, then:
+   ```bash
+   pyinstaller "AI Gateway.spec" --windowed
+   ```
+   Output: `dist/AI Gateway.app`.
+
+> Simplest option on macOS: skip the tray and run `python app.py` directly (or as a `launchd` service).
+
 **Auto-start (Windows):**
 Toggle it directly from the tray icon right-click menu. It will appear in Windows Settings → Apps → Startup, where you can also manage it.
 
@@ -174,12 +200,38 @@ python app.py
 
 ### 构建独立可执行文件
 
+**Windows：**
 ```bash
 pip install pyinstaller
 pyinstaller "AI Gateway.spec"
 ```
-
 输出：`dist/AI Gateway.exe`（约 26 MB，单文件，无控制台窗口）。
+
+**macOS：**
+
+PyInstaller 不支持交叉编译，必须在 Mac 机器上构建。当前 `main.py` 含 Windows 专用代码（`winreg`、`.lnk` 快捷方式、`CREATE_NO_WINDOW`、`%APPDATA%` 路径），托盘功能开箱即用不了，需要改造：
+
+1. 在 Mac 上克隆并装依赖：
+   ```bash
+   git clone https://gitee.com/nachao/ai-getway.git
+   cd ai-getway
+   python3 -m venv venv && source venv/bin/activate
+   pip install -r requirements.txt pyinstaller
+   ```
+2. 改造 `main.py`：移除 `winreg` 和 `CREATE_NO_WINDOW`，把 Startup `.lnk` 换成 `~/Library/LaunchAgents/*.plist`；或者直接跳过托盘，运行 `python app.py`。
+3. 用 `sips` + `iconutil` 把 `static/icon.png` 转成 `icon.icns`：
+   ```bash
+   mkdir icon.iconset
+   for s in 16 32 128 256 512; do sips -z $s $s static/icon.png --out icon.iconset/icon_${s}x${s}.png; done
+   iconutil -c icns icon.iconset -o static/icon.icns
+   ```
+4. 复制一份 `AI Gateway.spec`，把 `icon` 改成 `static/icon.icns`，然后：
+   ```bash
+   pyinstaller "AI Gateway.spec" --windowed
+   ```
+   输出：`dist/AI Gateway.app`。
+
+> Mac 上最简单的方案：不做托盘，直接 `python app.py`，或者用 `launchd` 注册为服务。
 
 ### 开机自启动
 
