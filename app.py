@@ -43,7 +43,7 @@ PORT = int(_cfg("port", "PORT", 5000))
 DATA_DIR = os.path.join(os.path.expandvars("%APPDATA%"), "AI Gateway")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-_db_path = _cfg("db_path", "DB_PATH", os.path.join(DATA_DIR, "usage.db"))
+_db_path = os.path.expandvars(_cfg("db_path", "DB_PATH", os.path.join(DATA_DIR, "usage.db")))
 # 兼容 config.json 中可能存在的相对路径：基于 EXE_DIR 解析为绝对路径
 DB_PATH = os.path.join(EXE_DIR, _db_path) if not os.path.isabs(_db_path) else _db_path
 
@@ -130,7 +130,40 @@ def count_tokens(model: str, text: str) -> int:
         pass
     return max(1, len(text) // 4)
 
+
+# ── glm tokenizer ─────────────────────────────────────────────
+
+GLM_TOKENIZER_URL = _cfg("glm_tokenizer_url", "GLM_TOKENIZER_URL", "https://open.bigmodel.cn/api/paas/v4/tokenizer")
+
+
+def glm_count_messages_tokens(model: str, messages: list) -> int | None:
+    """Use GLM's official tokenizer API for accurate counting. Returns None on failure."""
+    api_key = CONFIG.get("glm_api_key", "") or os.environ.get("GLM_API_KEY", "")
+    if not api_key:
+        return None
+    try:
+        resp = requests.post(
+            GLM_TOKENIZER_URL,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            json={"model": model, "messages": messages},
+            timeout=10,
+        )
+        if resp.ok:
+            return resp.json()["usage"]["prompt_tokens"]
+    except Exception:
+        pass
+    return None
+
+
 def count_messages_tokens(model: str, messages: list) -> int:
+    # GLM models: use official tokenizer API for accuracy
+    if model.lower().startswith("glm"):
+        glm_tokens = glm_count_messages_tokens(model, messages)
+        if glm_tokens is not None:
+            return glm_tokens
     total = 0
     for msg in messages:
         content = msg.get("content", "")

@@ -151,6 +151,8 @@ ai-gateway/
 | `PORT` | `5000` | Listening port |
 | `DB_PATH` | `./usage.db` | SQLite database path |
 | `KIMI_ESTIMATE_URL` | `https://api.moonshot.cn/v1/tokenizers/estimate-token-count` | Kimi token estimation API |
+| `GLM_TOKENIZER_URL` | `https://open.bigmodel.cn/api/paas/v4/tokenizer` | GLM tokenizer API endpoint |
+| `GLM_API_KEY` | — | API key for GLM tokenizer (required for GLM models) |
 
 ## Docker
 
