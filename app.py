@@ -1,13 +1,16 @@
 import os
 import sys
 import json
+import shutil
+import time
 import sqlite3
+import tempfile
 from datetime import datetime, timedelta
 
 import requests
-from flask import Flask, request, jsonify, render_template, Response, stream_with_context
+from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_file
 
-VERSION = "0.6.2"
+VERSION = "0.6.9"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -39,6 +42,11 @@ app = Flask(
 
 PORT = int(_cfg("port", "PORT", 5000))
 
+# 出站代理：解决云服务器 IP 被上游 AI API 封禁问题
+# 支持 http://host:port、socks5://host:port；留空则直连
+OUTBOUND_PROXY = _cfg("outbound_proxy", "OUTBOUND_PROXY", "") or None
+PROXIES = {"http": OUTBOUND_PROXY, "https": OUTBOUND_PROXY} if OUTBOUND_PROXY else None
+
 # 统一数据目录：无论通过 vbs 还是 exe 启动，默认都用同一个位置
 DATA_DIR = os.path.join(os.path.expandvars("%APPDATA%"), "AI Gateway")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -55,12 +63,10 @@ def get_db():
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
-def init_db():
-    conn = get_db()
+def ensure_schema(conn):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS usage_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            scope TEXT NOT NULL DEFAULT 'default',
             model TEXT NOT NULL,
             provider TEXT NOT NULL,
             prompt_tokens INTEGER NOT NULL DEFAULT 0,
@@ -71,26 +77,26 @@ def init_db():
             duration_ms INTEGER DEFAULT 0
         )
     """)
-    # 用户模型配置表
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS scope_models (
+        CREATE TABLE IF NOT EXISTS models (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            scope TEXT NOT NULL,
-            model TEXT NOT NULL,
+            model TEXT NOT NULL UNIQUE,
             api_base TEXT NOT NULL,
             api_key TEXT DEFAULT '',
             is_default INTEGER DEFAULT 0,
-            created_at DATETIME DEFAULT (datetime('now', 'localtime')),
-            UNIQUE(scope, model)
+            created_at DATETIME DEFAULT (datetime('now', 'localtime'))
         )
     """)
-    # 兼容旧数据库：添加新列
-    for col, dtype in [("duration_ms", "INTEGER DEFAULT 0"), ("scope", "TEXT NOT NULL DEFAULT 'default'")]:
+    for col, dtype in [("duration_ms", "INTEGER DEFAULT 0")]:
         try:
             conn.execute(f"ALTER TABLE usage_logs ADD COLUMN {col} {dtype}")
         except sqlite3.OperationalError:
             pass
     conn.commit()
+
+def init_db():
+    conn = get_db()
+    ensure_schema(conn)
     conn.close()
 
 # ── tokenizer ──────────────────────────────────────────────────
@@ -150,6 +156,7 @@ def glm_count_messages_tokens(model: str, messages: list) -> int | None:
             },
             json={"model": model, "messages": messages},
             timeout=10,
+            proxies=PROXIES,
         )
         if resp.ok:
             return resp.json()["usage"]["prompt_tokens"]
@@ -192,25 +199,25 @@ def _extract_content(data: dict) -> str:
         pass
     return ""
 
-def _log_usage(scope, model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms=0):
+def _log_usage(model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms=0):
     try:
         conn = get_db()
         conn.execute(
-            "INSERT INTO usage_logs (scope, model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (scope, model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms),
+            "INSERT INTO usage_logs (model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms),
         )
         conn.commit()
         conn.close()
         speed = f" {(total_tokens * 1000 // max(duration_ms, 1))}t/s" if duration_ms else ""
-        print(f"  LOG: [{scope}] {model} | {provider} | +{prompt_tokens}p +{completion_tokens}c = {total_tokens}t | {duration_ms}ms{speed}")
+        print(f"  LOG: {model} | {provider} | +{prompt_tokens}p +{completion_tokens}c = {total_tokens}t | {duration_ms}ms{speed}")
     except Exception as e:
         print(f"  LOG FAIL: {e}")
 
-def _handle_stream(scope, target_url, headers, body_data, model, provider_label, prompt_tokens, raw_body=None):
+def _handle_stream(target_url, headers, body_data, model, provider_label, prompt_tokens, raw_body=None):
     if raw_body:
-        resp = requests.post(target_url, headers=headers, data=raw_body, stream=True, timeout=300)
+        resp = requests.post(target_url, headers=headers, data=raw_body, stream=True, timeout=300, proxies=PROXIES)
     else:
-        resp = requests.post(target_url, headers=headers, json=body_data, stream=True, timeout=300)
+        resp = requests.post(target_url, headers=headers, json=body_data, stream=True, timeout=300, proxies=PROXIES)
     if not resp.ok:
         err = resp.text[:500] if resp.text else "(empty body)"
         print(f"  UPSTREAM {resp.status_code} (stream): {err}")
@@ -280,7 +287,7 @@ def _handle_stream(scope, target_url, headers, body_data, model, provider_label,
             ct = count_tokens(model, complete_content)
         end_time = state.get("end_time") or datetime.now()
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
-        _log_usage(scope, model, provider_label, pt, ct, pt + ct, path, duration_ms)
+        _log_usage(model, provider_label, pt, ct, pt + ct, path, duration_ms)
 
     response = Response(stream_with_context(generate()), content_type=resp.headers.get("content-type", "text/event-stream"))
     response.call_on_close(do_log)
@@ -299,7 +306,7 @@ def _clean_messages(body_dict: dict) -> dict:
     return body_dict
 
 
-def _proxy_passthrough(scope, upstream_url, body, model, stream):
+def _proxy_passthrough(upstream_url, body, model, stream):
     headers = {"Content-Type": "application/json"}
     for h in ("Authorization", "User-Agent"):
         v = request.headers.get(h)
@@ -316,11 +323,11 @@ def _proxy_passthrough(scope, upstream_url, body, model, stream):
     raw_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
     if stream:
-        return _handle_stream(scope, upstream_url, headers, body, model, provider_label, prompt_tokens, raw_body)
+        return _handle_stream(upstream_url, headers, body, model, provider_label, prompt_tokens, raw_body)
 
     print(f"  POST {upstream_url} | model={model} | stream={stream} | body={raw_body[:200].decode('utf-8', errors='replace')}")
     start_time = datetime.now()
-    resp = requests.post(upstream_url, headers=headers, data=raw_body, timeout=300)
+    resp = requests.post(upstream_url, headers=headers, data=raw_body, timeout=300, proxies=PROXIES)
     if not resp.ok:
         err = resp.text[:500] if resp.text else "(empty body)"
         print(f"  UPSTREAM {resp.status_code}: {err}")
@@ -333,80 +340,72 @@ def _proxy_passthrough(scope, upstream_url, body, model, stream):
         prompt_tokens = usage["prompt_tokens"]
     completion_tokens = usage.get("completion_tokens", 0) or count_tokens(model, _extract_content(data))
     duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-    _log_usage(scope, model, provider_label, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, request.path, duration_ms)
+    _log_usage(model, provider_label, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, request.path, duration_ms)
     return jsonify(data)
 
 
 @app.route("/v1/chat/completions", methods=["POST"])
-@app.route("/<scope>/v1/chat/completions", methods=["POST"])
-def proxy(scope="default"):
+def proxy():
     body = request.get_json(force=True)
     model = body.get("model", "")
     stream = body.get("stream", False)
 
     upstream_url = request.args.get("by")
     if upstream_url:
-        return _proxy_passthrough(scope, upstream_url.rstrip("/") + "/chat/completions", body, model, stream)
+        return _proxy_passthrough(upstream_url.rstrip("/") + "/chat/completions", body, model, stream)
     
-    # 没有 by 参数时，查找默认模型配置
     if not model:
         return jsonify({"error": "model is required when ?by is not specified"}), 400
     
     conn = get_db()
     row = conn.execute(
-        "SELECT api_base, api_key FROM scope_models WHERE scope = ? AND (model = ? OR is_default = 1) ORDER BY is_default DESC LIMIT 1",
-        (scope, model)
+        "SELECT api_base, api_key FROM models WHERE (model = ? OR is_default = 1) ORDER BY is_default DESC LIMIT 1",
+        (model,)
     ).fetchone()
     conn.close()
     
     if not row:
-        return jsonify({"error": f"No model config found for scope '{scope}' and model '{model}'. Use ?by=<upstream_url> or configure models."}), 400
+        return jsonify({"error": f"No model config found for '{model}'. Use ?by=<upstream_url> or configure models."}), 400
     
     api_base = row["api_base"].rstrip("/")
     api_key = row["api_key"]
     
-    # 构建请求头
     if api_key:
         request.headers = {**request.headers, "Authorization": f"Bearer {api_key}"}
     
-    return _proxy_passthrough(scope, api_base + "/chat/completions", body, model, stream)
+    return _proxy_passthrough(api_base, body, model, stream)
 
 
 @app.route("/v1", methods=["POST"])
-@app.route("/<scope>/v1", methods=["POST"])
-def proxy_v1(scope="default"):
-    """SDK appends /chat/completions to baseURL, but when ?by= has query,
-    the append lands inside the query value. Catch that here."""
+def proxy_v1():
+    upstream_url = request.args.get("by")
     body = request.get_json(force=True)
     model = body.get("model", "")
     stream = body.get("stream", False)
 
-    upstream_url = request.args.get("by")
     if upstream_url:
-        return _proxy_passthrough(scope, upstream_url, body, model, stream)
+        return _proxy_passthrough(upstream_url, body, model, stream)
     
-    # 没有 by 参数时，查找默认模型配置
     if not model:
         return jsonify({"error": "model is required when ?by is not specified"}), 400
     
     conn = get_db()
     row = conn.execute(
-        "SELECT api_base, api_key FROM scope_models WHERE scope = ? AND (model = ? OR is_default = 1) ORDER BY is_default DESC LIMIT 1",
-        (scope, model)
+        "SELECT api_base, api_key FROM models WHERE (model = ? OR is_default = 1) ORDER BY is_default DESC LIMIT 1",
+        (model,)
     ).fetchone()
     conn.close()
     
     if not row:
-        return jsonify({"error": f"No model config found for scope '{scope}' and model '{model}'. Use ?by=<upstream_url> or configure models."}), 400
+        return jsonify({"error": f"No model config found for '{model}'. Use ?by=<upstream_url> or configure models."}), 400
     
     api_base = row["api_base"].rstrip("/")
     api_key = row["api_key"]
     
-    # 构建请求头
     if api_key:
         request.headers = {**request.headers, "Authorization": f"Bearer {api_key}"}
     
-    return _proxy_passthrough(scope, api_base, body, model, stream)
+    return _proxy_passthrough(api_base, body, model, stream)
 
 
 @app.route("/api/usage")
@@ -414,7 +413,6 @@ def api_usage():
     start = request.args.get("start", (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S"))
     end = request.args.get("end", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     group_by = request.args.get("group_by", "hour")
-    scope = request.args.get("scope")
 
     if group_by == "minute":
         sql_format = "strftime('%Y-%m-%d %H:%M', request_time)"
@@ -427,17 +425,13 @@ def api_usage():
 
     conn = get_db()
     
-    # 构建 WHERE 条件
     where_conditions = ["request_time BETWEEN ? AND ?"]
     params = [start, end]
-    if scope:
-        where_conditions.append("scope = ?")
-        params.append(scope)
     where_clause = " AND ".join(where_conditions)
     
     total_in_range = conn.execute(f"SELECT COUNT(*) as n FROM usage_logs WHERE {where_clause}", params).fetchone()["n"]
     total_all = conn.execute("SELECT COUNT(*) as n FROM usage_logs").fetchone()["n"]
-    print(f"  USAGE API: start={start} end={end} scope={scope} | in_range={total_in_range} total_all={total_all}")
+    print(f"  USAGE API: start={start} end={end} | in_range={total_in_range} total_all={total_all}")
     rows = conn.execute(
         f"""
         SELECT {sql_format} as period,
@@ -537,7 +531,6 @@ def api_recent():
     page_size = request.args.get("page_size", 100, type=int)
     start = request.args.get("start")
     end = request.args.get("end")
-    scope = request.args.get("scope")
     if page < 1:
         page = 1
     if page_size < 1:
@@ -550,9 +543,6 @@ def api_recent():
     if start and end:
         where_conditions.append("request_time BETWEEN ? AND ?")
         params.extend([start, end])
-    if scope:
-        where_conditions.append("scope = ?")
-        params.append(scope)
     
     where = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
 
@@ -571,36 +561,19 @@ def api_recent():
     })
 
 
-@app.route("/api/scopes")
-def api_scopes():
-    """获取所有命名空间列表"""
+@app.route("/api/models", methods=["GET"])
+def get_models():
     conn = get_db()
     rows = conn.execute(
-        "SELECT scope, COUNT(*) as request_count, SUM(total_tokens) as total_tokens FROM usage_logs GROUP BY scope ORDER BY request_count DESC"
+        "SELECT * FROM models ORDER BY is_default DESC, model ASC"
     ).fetchall()
     conn.close()
     
-    scopes = [dict(r) for r in rows]
-    return jsonify({"scopes": scopes})
+    return jsonify({"models": [dict(r) for r in rows]})
 
 
-@app.route("/api/scope/<scope>/models", methods=["GET"])
-def get_scope_models(scope):
-    """获取指定命名空间的模型配置"""
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT * FROM scope_models WHERE scope = ? ORDER BY is_default DESC, model ASC",
-        (scope,)
-    ).fetchall()
-    conn.close()
-    
-    models = [dict(r) for r in rows]
-    return jsonify({"scope": scope, "models": models})
-
-
-@app.route("/api/scope/<scope>/models", methods=["POST"])
-def add_scope_model(scope):
-    """添加模型配置"""
+@app.route("/api/models", methods=["POST"])
+def add_model():
     data = request.get_json(force=True)
     model = data.get("model", "").strip()
     api_base = data.get("api_base", "").strip()
@@ -612,13 +585,12 @@ def add_scope_model(scope):
     
     conn = get_db()
     try:
-        # 如果设置为默认，先取消其他默认
         if is_default:
-            conn.execute("UPDATE scope_models SET is_default = 0 WHERE scope = ?", (scope,))
+            conn.execute("UPDATE models SET is_default = 0")
         
         conn.execute(
-            "INSERT OR REPLACE INTO scope_models (scope, model, api_base, api_key, is_default) VALUES (?, ?, ?, ?, ?)",
-            (scope, model, api_base, api_key, is_default)
+            "INSERT OR REPLACE INTO models (model, api_base, api_key, is_default) VALUES (?, ?, ?, ?)",
+            (model, api_base, api_key, is_default)
         )
         conn.commit()
     except Exception as e:
@@ -629,103 +601,107 @@ def add_scope_model(scope):
     return jsonify({"success": True})
 
 
-@app.route("/api/scope/<scope>/models/<int:model_id>", methods=["DELETE"])
-def delete_scope_model(scope, model_id):
-    """删除模型配置"""
+@app.route("/api/models/<int:model_id>", methods=["DELETE"])
+def delete_model(model_id):
     conn = get_db()
-    conn.execute("DELETE FROM scope_models WHERE id = ? AND scope = ?", (model_id, scope))
+    conn.execute("DELETE FROM models WHERE id = ?", (model_id,))
     conn.commit()
     conn.close()
     
     return jsonify({"success": True})
 
 
-@app.route("/api/scope/<scope>/models/<int:model_id>/default", methods=["PUT"])
-def set_default_model(scope, model_id):
-    """设置默认模型"""
+@app.route("/api/models/<int:model_id>/default", methods=["PUT"])
+def set_default_model(model_id):
     conn = get_db()
-    # 取消该命名空间下所有默认
-    conn.execute("UPDATE scope_models SET is_default = 0 WHERE scope = ?", (scope,))
-    # 设置指定模型为默认
-    conn.execute("UPDATE scope_models SET is_default = 1 WHERE id = ? AND scope = ?", (model_id, scope))
+    conn.execute("UPDATE models SET is_default = 0")
+    conn.execute("UPDATE models SET is_default = 1 WHERE id = ?", (model_id,))
     conn.commit()
     conn.close()
     
     return jsonify({"success": True})
-
-
-@app.route("/api/test-model", methods=["POST"])
-def test_model():
-    """测试模型连接"""
-    data = request.get_json(force=True)
-    scope = data.get("scope", "default")
-    model = data.get("model", "").strip()
-    api_base = data.get("api_base", "").strip()
-    api_key = data.get("api_key", "").strip()
-    
-    if not model or not api_base:
-        return jsonify({"success": False, "error": "model and api_base are required"})
-    
-    # 构建测试请求
-    test_url = api_base.rstrip("/") + "/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    
-    test_body = {
-        "model": model,
-        "messages": [{"role": "user", "content": "Hi"}],
-        "max_tokens": 5,
-        "stream": False
-    }
-    
-    start_time = datetime.now()
-    try:
-        resp = requests.post(test_url, headers=headers, json=test_body, timeout=30)
-        latency = int((datetime.now() - start_time).total_seconds() * 1000)
-        
-        if resp.ok:
-            data = resp.json()
-            # 尝试获取响应内容
-            content = ""
-            if "choices" in data and len(data["choices"]) > 0:
-                content = data["choices"][0].get("message", {}).get("content", "")
-            elif "content" in data:
-                content = str(data["content"])
-            
-            return jsonify({
-                "success": True,
-                "latency": latency,
-                "model": model,
-                "response_preview": content[:100] if content else "(empty)"
-            })
-        else:
-            error_msg = resp.text[:200] if resp.text else f"HTTP {resp.status_code}"
-            return jsonify({
-                "success": False,
-                "error": error_msg,
-                "latency": latency
-            })
-    except requests.exceptions.Timeout:
-        return jsonify({"success": False, "error": "请求超时 (30s)"})
-    except requests.exceptions.ConnectionError:
-        return jsonify({"success": False, "error": f"无法连接到 {api_base}"})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
 
 
 @app.route("/")
 def landing():
-    return render_template("landing.html")
+    return render_template("index.html")
 
+
+@app.route("/favicon.ico")
+def favicon():
+    return app.send_static_file("icon.ico")
 
 @app.route("/dashboard")
-@app.route("/<scope>")
-def dashboard(scope=None):
-    # 排除 API 路径和其他静态资源
-    if scope and (scope.startswith('api') or scope.startswith('static') or scope == 'favicon.ico'):
-        return jsonify({"error": "Not found"}), 404
-    return render_template("index.html", scope=scope or "")
+def dashboard():
+    return render_template("index.html")
+
+
+@app.route("/api/db/download")
+def api_db_download():
+    if not os.path.exists(DB_PATH):
+        return jsonify({"error": "数据库文件不存在"}), 404
+    return send_file(DB_PATH, as_attachment=True, download_name="usage.db")
+
+
+@app.route("/api/db/upload", methods=["POST"])
+def api_db_upload():
+    if "file" not in request.files:
+        return jsonify({"error": "未选择文件"}), 400
+    f = request.files["file"]
+    if f.filename == "":
+        return jsonify({"error": "文件名为空"}), 400
+    if not f.filename.endswith(".db"):
+        return jsonify({"error": "仅支持 .db 文件"}), 400
+
+    target_path = DB_PATH
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+    tmp_path = tmp.name
+    try:
+        f.save(tmp_path)
+        tmp.close()
+
+        conn = sqlite3.connect(tmp_path)
+        conn.execute("PRAGMA journal_mode=WAL")
+        ensure_schema(conn)
+        conn.close()
+
+        if os.path.exists(target_path):
+            for i in range(5):
+                try:
+                    _src = sqlite3.connect(target_path)
+                    try:
+                        _dst = sqlite3.connect(target_path + ".bak")
+                        try:
+                            _src.backup(_dst)
+                        finally:
+                            _dst.close()
+                    finally:
+                        _src.close()
+                    break
+                except PermissionError:
+                    if i == 4:
+                        raise
+                    time.sleep(0.3)
+
+        for i in range(5):
+            try:
+                if os.path.exists(target_path):
+                    os.remove(target_path)
+                shutil.move(tmp_path, target_path)
+                tmp_path = None
+                break
+            except PermissionError:
+                if i == 4:
+                    raise
+                time.sleep(0.3)
+    except Exception as e:
+        return jsonify({"error": f"导入失败：{e}"}), 500
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+    return jsonify({"success": True, "message": "导入成功"})
 
 
 init_db()

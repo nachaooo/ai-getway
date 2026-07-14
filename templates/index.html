@@ -1,9 +1,10 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="dark" data-lang="zh">
+<html lang="zh-CN" data-theme="light" data-lang="zh">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI Gateway</title>
+<link rel="icon" type="image/x-icon" href="/static/icon.ico">
 <style>
 :root {
   --bg: #0f0f0f;
@@ -62,9 +63,7 @@ a { color: var(--link); font-size: 12px; text-decoration: none; }
 .controls { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
 .controls button { background: var(--btn-bg); border: 1px solid var(--btn-border); color: var(--btn-fg); padding: 6px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
 .controls button.active { background: var(--btn-active-bg); border-color: var(--btn-active-border); color: var(--btn-active-fg); }
-.scope-select { background: var(--btn-bg); border: 1px solid var(--btn-border); color: var(--btn-fg); padding: 6px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; outline: none; }
-.scope-select:focus { border-color: var(--btn-active-border); }
-.scope-select option { background: var(--card-bg); color: var(--fg); }
+
 .stats { display: flex; gap: 12px; margin-bottom: 20px; }
 .stat { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px 18px; flex: 1; }
 .stat .n { font-size: 24px; font-weight: 700; color: var(--heading); }
@@ -72,6 +71,8 @@ a { color: var(--link); font-size: 12px; text-decoration: none; }
 .stat .mom { font-size: 11px; margin-top: 4px; display: none; color: var(--muted); }
 .stat .mom.up { color: #22c55e; }
 .stat .mom.down { color: #ef4444; }
+.stats-empty { display: none; width: 100%; text-align: center; color: var(--empty); font-size: 13px; padding: 16px 0; }
+.chart-empty { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; color: var(--empty); font-size: 13px; }
 .section { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
 .section h2 { font-size: 12px; color: var(--muted); font-weight: 500; margin-bottom: 10px; }
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -122,13 +123,6 @@ td:last-child, th:last-child { text-align: right; }
 .modal-form-actions button { flex: 1; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; border: none; transition: all 0.2s; }
 .btn-add { background: var(--btn-active-bg); color: var(--btn-active-fg); }
 .btn-add:hover { opacity: 0.9; }
-.btn-test { background: var(--btn-bg); border: 1px solid var(--btn-border) !important; color: var(--btn-fg); display: flex; align-items: center; justify-content: center; gap: 6px; }
-.btn-test:hover { border-color: #22c55e !important; color: #22c55e; }
-.btn-test.testing { opacity: 0.6; cursor: not-allowed; }
-.test-result { margin-top: 12px; padding: 12px; border-radius: 8px; font-size: 13px; line-height: 1.6; }
-.test-result.success { background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.2); color: #22c55e; }
-.test-result.error { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #ef4444; }
-
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -183,7 +177,9 @@ td:last-child, th:last-child { text-align: right; }
       <button id="layoutBtn" onclick="toggleLayout()">看板</button>
       <button id="themeBtn" onclick="toggleTheme()">Light</button>
       <button id="langBtn" onclick="toggleLang()">EN</button>
-      <button id="modelsBtn" onclick="openModelsModal()" style="background:var(--btn-active-bg); border:1px solid var(--btn-active-border); color:var(--btn-active-fg);">Models</button>
+      <button onclick="downloadDb()" data-i18n="dbExport">导出</button>
+      <button onclick="document.getElementById('dbFileInput').click()" data-i18n="dbImport">导入</button>
+      <input type="file" id="dbFileInput" accept=".db" style="display:none" onchange="uploadDb(this)">
     </div>
   </div>
 
@@ -194,9 +190,6 @@ td:last-child, th:last-child { text-align: right; }
     <button data-range="30d" data-i18n="range30d">30天</button>
     <button data-range="today" data-i18n="rangeToday">今日</button>
     <button data-range="yesterday" data-i18n="rangeYesterday">昨日</button>
-    <select id="scopeSelect" class="scope-select">
-      <option value="">全部命名空间</option>
-    </select>
   </div>
 
   <div class="kanban-main">
@@ -205,6 +198,7 @@ td:last-child, th:last-child { text-align: right; }
         <div class="stat"><div class="n" id="totalRequests">-</div><div class="mom" id="totalRequestsMom"></div><div class="l" data-i18n="statRequests">对话次数</div></div>
         <div class="stat"><div class="n" id="promptTokens">-</div><div class="mom" id="promptTokensMom"></div><div class="l" data-i18n="statInput">输入 Token</div></div>
         <div class="stat"><div class="n" id="completionTokens">-</div><div class="mom" id="completionTokensMom"></div><div class="l" data-i18n="statOutput">输出 Token</div></div>
+        <div class="stats-empty"></div>
       </div>
 
       <div class="section">
@@ -243,33 +237,6 @@ td:last-child, th:last-child { text-align: right; }
   </div>
 </div>
 
-<!-- 模型配置模态框 -->
-<div id="modelsModal" class="modal" style="display:none;">
-  <div class="modal-content">
-    <div class="modal-header">
-      <h3>模型配置 <span id="modalScopeLabel" style="color:var(--btn-active-bg); font-weight:normal;"></span></h3>
-      <button onclick="closeModelsModal()" class="modal-close">&times;</button>
-    </div>
-    <div class="modal-body">
-      <div id="modalModelList"></div>
-      <div class="modal-form">
-        <input type="text" id="modalModelName" placeholder="模型名称 (如 gpt-4)">
-        <input type="text" id="modalModelApiBase" placeholder="API Base URL (如 https://api.openai.com/v1)">
-        <input type="password" id="modalModelApiKey" placeholder="API Key (可选)">
-        <div class="modal-form-actions">
-          <button onclick="addModelFromModal()" class="btn-add">添加</button>
-          <button onclick="testModelFromModal()" class="btn-test">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polygon points="5 3 19 12 5 21 5 3"/>
-            </svg>
-            测试连接
-          </button>
-        </div>
-      </div>
-      <div id="testResult" class="test-result" style="display:none;"></div>
-    </div>
-  </div>
-</div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script>
@@ -286,6 +253,7 @@ const I18N = {
     colTime: '时间', colModel: '模型', colProvider: '平台', colInput: '输入', colOutput: '输出',
     prev: '上一页', next: '下一页', empty: '暂无数据', token: 'Token', requests: '请求数',
     layoutDefault: '默认', layoutKanban: '看板',
+    dbExport: '导出', dbImport: '导入',
     configStats: '统计数据', configTrend: '用量趋势', configModelsTrend: '模型趋势',
     configBilling: '平台使用量', configModelUsage: '模型使用量', configRecent: '最近请求',
   },
@@ -297,6 +265,7 @@ const I18N = {
     colTime: 'Time', colModel: 'Model', colProvider: 'Provider', colInput: 'Input', colOutput: 'Output',
     prev: 'Prev', next: 'Next', empty: 'No data', token: 'Token', requests: 'Requests',
     layoutDefault: 'Default', layoutKanban: 'Kanban',
+    dbExport: 'Export', dbImport: 'Import',
     configStats: 'Statistics', configTrend: 'Usage Trend', configModelsTrend: 'Models Trend',
     configBilling: 'Provider Usage', configModelUsage: 'Model Usage', configRecent: 'Recent Requests',
   }
@@ -308,6 +277,8 @@ function applyLang() {
     const key = el.getAttribute('data-i18n');
     if (I18N[lang][key]) el.textContent = I18N[lang][key];
   });
+  const title = document.getElementById('pageTitle');
+  title.textContent = 'AI Gateway';
   document.getElementById('langBtn').textContent = lang === 'zh' ? 'EN' : '中';
   applyLayout();
 }
@@ -506,6 +477,17 @@ function renderRecent(items) {
 }
 
 function renderChart(timeline, groupBy) {
+  const lang = document.documentElement.getAttribute('data-lang') || 'zh';
+  const wrap = document.getElementById('trendChart').parentElement;
+  let emptyEl = wrap.querySelector('.chart-empty');
+  if (!timeline || timeline.length === 0) {
+    if (window._chart) { window._chart.destroy(); window._chart = null; }
+    if (!emptyEl) { emptyEl = document.createElement('div'); emptyEl.className = 'chart-empty'; wrap.appendChild(emptyEl); }
+    emptyEl.textContent = I18N[lang].empty;
+    emptyEl.style.display = 'flex';
+    return;
+  }
+  if (emptyEl) emptyEl.style.display = 'none';
   const merged = {};
   for (const t of timeline) {
     if (!merged[t.period]) {
@@ -528,7 +510,6 @@ function renderChart(timeline, groupBy) {
   const tokens = periods.map(p => merged[p].total_tokens);
   const counts = periods.map(p => merged[p].request_count);
   const c = chartColors();
-  const lang = document.documentElement.getAttribute('data-lang') || 'zh';
 
   if (window._chart) {
     window._chart.data.labels = labels;
@@ -584,6 +565,17 @@ function renderChart(timeline, groupBy) {
 }
 
 function renderModelsChart(timeline, groupBy) {
+  const lang = document.documentElement.getAttribute('data-lang') || 'zh';
+  const wrap = document.getElementById('modelsTrendChart').parentElement;
+  let emptyEl = wrap.querySelector('.chart-empty');
+  if (!timeline || timeline.length === 0) {
+    if (window._modelsChart) { window._modelsChart.destroy(); window._modelsChart = null; }
+    if (!emptyEl) { emptyEl = document.createElement('div'); emptyEl.className = 'chart-empty'; wrap.appendChild(emptyEl); }
+    emptyEl.textContent = I18N[lang].empty;
+    emptyEl.style.display = 'flex';
+    return;
+  }
+  if (emptyEl) emptyEl.style.display = 'none';
   const modelData = {};
   for (const t of timeline) {
     if (!modelData[t.model]) {
@@ -652,7 +644,6 @@ function renderModelsChart(timeline, groupBy) {
   });
 
   const c = chartColors();
-  const lang = document.documentElement.getAttribute('data-lang') || 'zh';
 
   if (window._modelsChart) {
     window._modelsChart.data.labels = labels;
@@ -751,7 +742,6 @@ function fetchAll() {
   const now = new Date();
   const btn = document.querySelector('[data-range].active');
   const range = btn?.dataset?.range || '24h';
-  const scope = document.getElementById('scopeSelect')?.value || '';
   let startDate, endDate;
   if (range === 'today') {
     startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -772,7 +762,6 @@ function fetchAll() {
   currentEnd = e;
 
   const params = { start: s, end: e, group_by: groupBy };
-  if (scope) params.scope = scope;
   const mainPromise = fetch('/api/usage?' + new URLSearchParams(params))
     .then(r => r.json());
 
@@ -784,13 +773,21 @@ function fetchAll() {
     prevStart = localISO(new Date(startDate.getTime() - durationMs));
     prevEnd = localISO(new Date(endDate.getTime() - durationMs));
   }
-  const prevPromise = fetch('/api/usage?' + new URLSearchParams({ start: prevStart, end: prevEnd }))
+  const prevParams = { start: prevStart, end: prevEnd };
+  const prevPromise = fetch('/api/usage?' + new URLSearchParams(prevParams))
     .then(r => r.json());
 
   Promise.all([mainPromise, prevPromise]).then(([d, pd]) => {
+    const lang = document.documentElement.getAttribute('data-lang') || 'zh';
     document.getElementById('totalRequests').textContent = n(d.totals.request_count);
     document.getElementById('promptTokens').textContent = n(d.totals.prompt_tokens);
     document.getElementById('completionTokens').textContent = n(d.totals.completion_tokens);
+    const statsEmpty = document.querySelector('.stats-empty');
+    const statCards = document.querySelectorAll('.stats > .stat');
+    const allZero = !d.totals.request_count && !d.totals.prompt_tokens && !d.totals.completion_tokens;
+    statCards.forEach(el => el.style.display = allZero ? 'none' : '');
+    statsEmpty.style.display = allZero ? 'flex' : 'none';
+    if (allZero) statsEmpty.textContent = I18N[lang].empty;
     renderChart(d.timeline, groupBy);
     renderModelsChart(d.timeline, groupBy);
 
@@ -801,7 +798,6 @@ function fetchAll() {
     const bl = document.getElementById('billingList');
     const billing = d.billing || {};
     const entries = Object.entries(billing);
-    const lang = document.documentElement.getAttribute('data-lang') || 'zh';
     if (entries.length === 0) {
       bl.innerHTML = '<div class="empty">' + (I18N[lang].empty) + '</div>';
     } else {
@@ -845,9 +841,7 @@ function fetchAll() {
 
 function fetchRecent(p) {
   page = p;
-  const scope = document.getElementById('scopeSelect')?.value || '';
   const params = { page: page, page_size: PAGE_SIZE };
-  if (scope) params.scope = scope;
   if (currentStart && currentEnd) {
     params.start = currentStart;
     params.end = currentEnd;
@@ -870,215 +864,33 @@ document.querySelectorAll('[data-range]').forEach(btn => {
   });
 });
 
-function loadScopes(callback) {
-  fetch('/api/scopes')
-    .then(r => r.json())
-    .then(d => {
-      const select = document.getElementById('scopeSelect');
-      const currentVal = select.value;
-      select.innerHTML = '<option value="">全部命名空间</option>';
-      (d.scopes || []).forEach(s => {
-        const opt = document.createElement('option');
-        opt.value = s.scope;
-        opt.textContent = s.scope + ' (' + s.request_count + ')';
-        select.appendChild(opt);
-      });
-      select.value = currentVal;
-      if (callback) callback();
-    });
-}
-
-document.getElementById('scopeSelect')?.addEventListener('change', () => {
-  const scope = document.getElementById('scopeSelect').value;
-  // 更新 URL 路径
-  if (scope) {
-    window.history.pushState({}, '', '/' + scope);
-  } else {
-    window.history.pushState({}, '', '/');
-  }
-  page = 1;
-  fetchAll();
-  fetchRecent(1);
-});
-
-// 模态框相关函数
-function openModelsModal() {
-  const scope = document.getElementById('scopeSelect').value || window.location.pathname.replace(/^\/+|\/+$/g, '');
-  if (!scope) {
-    alert('请先选择一个命名空间');
-    return;
-  }
-  document.getElementById('modelsModal').style.display = 'flex';
-  document.getElementById('modalScopeLabel').textContent = '(' + scope + ')';
-  loadModalModels(scope);
-}
-
-function closeModelsModal() {
-  document.getElementById('modelsModal').style.display = 'none';
-}
-
-function loadModalModels(scope) {
-  const list = document.getElementById('modalModelList');
-  
-  fetch('/api/scope/' + encodeURIComponent(scope) + '/models')
-    .then(r => r.json())
-    .then(d => {
-      if (d.models.length === 0) {
-        list.innerHTML = '<div class="empty">暂无模型配置，请添加模型</div>';
-        return;
-      }
-      
-      let html = '<table><thead><tr><th>模型</th><th>API Base</th><th>默认</th><th>操作</th></tr></thead><tbody>';
-      d.models.forEach(m => {
-        const isDefault = m.is_default ? '✓' : '';
-        html += `<tr>
-          <td style="color:var(--heading)">${m.model}</td>
-          <td style="word-break:break-all;font-size:11px;">${m.api_base}</td>
-          <td style="text-align:center">${isDefault ? '<span style="color:#22c55e;font-weight:bold;">✓ 默认</span>' : '<button onclick="setDefaultFromModal(' + m.id + ')" style="background:none;border:none;color:var(--link);cursor:pointer;font-size:11px;">设为默认</button>'}</td>
-          <td style="text-align:right"><button onclick="deleteModelFromModal(${m.id})" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:11px;">删除</button></td>
-        </tr>`;
-      });
-      html += '</tbody></table>';
-      list.innerHTML = html;
-    });
-}
-
-function addModelFromModal() {
-  const scope = document.getElementById('scopeSelect').value || window.location.pathname.replace(/^\/+|\/+$/g, '');
-  if (!scope) return;
-  
-  const model = document.getElementById('modalModelName').value.trim();
-  const apiBase = document.getElementById('modalModelApiBase').value.trim();
-  const apiKey = document.getElementById('modalModelApiKey').value.trim();
-  
-  if (!model || !apiBase) {
-    alert('请填写模型名称和 API Base URL');
-    return;
-  }
-  
-  fetch('/api/scope/' + encodeURIComponent(scope) + '/models', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({model, api_base: apiBase, api_key: apiKey, is_default: false})
-  })
-  .then(r => r.json())
-  .then(d => {
-    if (d.success) {
-      document.getElementById('modalModelName').value = '';
-      document.getElementById('modalModelApiBase').value = '';
-      document.getElementById('modalModelApiKey').value = '';
-      loadModalModels(scope);
-    } else {
-      alert(d.error || '添加失败');
-    }
-  });
-}
-
-function testModelFromModal() {
-  const scope = document.getElementById('scopeSelect').value || window.location.pathname.replace(/^\/+|\/+$/g, '');
-  if (!scope) return;
-  
-  const model = document.getElementById('modalModelName').value.trim();
-  const apiBase = document.getElementById('modalModelApiBase').value.trim();
-  const apiKey = document.getElementById('modalModelApiKey').value.trim();
-  const resultDiv = document.getElementById('testResult');
-  const testBtn = document.querySelector('.btn-test');
-  
-  if (!model || !apiBase) {
-    showTestResult('error', '请先填写模型名称和 API Base URL');
-    return;
-  }
-  
-  // 显示测试中状态
-  testBtn.classList.add('testing');
-  testBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> 测试中...';
-  resultDiv.style.display = 'none';
-  
-  fetch('/api/test-model', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      scope: scope,
-      model: model,
-      api_base: apiBase,
-      api_key: apiKey
-    })
-  })
-  .then(r => r.json())
-  .then(d => {
-    testBtn.classList.remove('testing');
-    testBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> 测试连接';
-    
-    if (d.success) {
-      showTestResult('success', `✓ 连接成功！响应时间: ${d.latency}ms，模型: ${d.model}`);
-    } else {
-      showTestResult('error', `✗ 连接失败: ${d.error}`);
-    }
-  })
-  .catch(err => {
-    testBtn.classList.remove('testing');
-    testBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> 测试连接';
-    showTestResult('error', '请求失败: ' + err.message);
-  });
-}
-
-function showTestResult(type, message) {
-  const resultDiv = document.getElementById('testResult');
-  resultDiv.className = 'test-result ' + type;
-  resultDiv.textContent = message;
-  resultDiv.style.display = 'block';
-}
-
-function deleteModelFromModal(modelId) {
-  const scope = document.getElementById('scopeSelect').value || window.location.pathname.replace(/^\/+|\/+$/g, '');
-  if (!scope || !confirm('确定删除此模型配置？')) return;
-  
-  fetch('/api/scope/' + encodeURIComponent(scope) + '/models/' + modelId, {
-    method: 'DELETE'
-  })
-  .then(r => r.json())
-  .then(d => {
-    if (d.success) {
-      loadModalModels(scope);
-    }
-  });
-}
-
-function setDefaultFromModal(modelId) {
-  const scope = document.getElementById('scopeSelect').value || window.location.pathname.replace(/^\/+|\/+$/g, '');
-  if (!scope) return;
-  
-  fetch('/api/scope/' + encodeURIComponent(scope) + '/models/' + modelId + '/default', {
-    method: 'PUT'
-  })
-  .then(r => r.json())
-  .then(d => {
-    if (d.success) {
-      loadModalModels(scope);
-    }
-  });
-}
-
-// 点击模态框外部关闭
-document.getElementById('modelsModal')?.addEventListener('click', (e) => {
-  if (e.target === document.getElementById('modelsModal')) {
-    closeModelsModal();
-  }
-});
-
 initPrefs();
 
-// 从 URL 路径中读取 scope
-const pathScope = window.location.pathname.replace(/^\/+|\/+$/g, '');
-loadScopes(() => {
-  if (pathScope) {
-    document.getElementById('scopeSelect').value = pathScope;
-  }
-  fetchAll();
-  fetchRecent(1);
-});
+fetchAll();
+fetchRecent(1);
 
-setInterval(() => { loadScopes(); fetchAll(); fetchRecent(page); }, 15000);
+setInterval(() => { fetchAll(); fetchRecent(page); }, 15000);
+
+function downloadDb() {
+  window.location.href = '/api/db/download';
+}
+
+function uploadDb(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const formData = new FormData();
+  formData.append('file', file);
+  fetch('/api/db/upload', { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(d => {
+      if (d.success) {
+        alert('导入成功');
+        window.location.href = '/dashboard';
+      } else alert(d.error || '导入失败');
+    })
+    .catch(() => alert('导入失败'));
+  input.value = '';
+}
 </script>
 </body>
 </html>

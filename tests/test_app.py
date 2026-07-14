@@ -173,6 +173,51 @@ class TestProxyValidation(unittest.TestCase):
         data = json.loads(resp.data)
         self.assertIn("?by=", data["error"])
 
+    def test_proxy_v1_no_query_no_model(self):
+        """POST /v1 无参数无 model 返回 JSON 400（非 HTML）"""
+        resp = self.client.post("/v1", json={})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("application/json", resp.content_type)
+        data = json.loads(resp.data)
+        self.assertIn("model is required", data["error"])
+
+    def test_proxy_v1_arbitrary_query_no_model(self):
+        """POST /v1?任意参数 应返回 JSON 400（非 HTML 400）"""
+        resp = self.client.post("/v1?foo=bar", json={})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("application/json", resp.content_type)
+        data = json.loads(resp.data)
+        self.assertIn("model is required", data["error"])
+
+    def test_proxy_v1_by_param_with_model(self):
+        """POST /v1?by=url 正确转发上游（mock）"""
+        with patch("app.requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.ok = True
+            mock_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+            mock_post.return_value = mock_resp
+
+            resp = self.client.post("/v1?by=https://api.test.com/v1", json={"model": "gpt-4", "messages": [{"role": "user", "content": "hi"}]})
+            self.assertEqual(resp.status_code, 200)
+            data = json.loads(resp.data)
+            self.assertEqual(data["choices"][0]["message"]["content"], "ok")
+
+    def test_proxy_v1_chat_completions_no_query(self):
+        """POST /v1/chat/completions 无参数返回 JSON 400（非 HTML）"""
+        resp = self.client.post("/v1/chat/completions", json={})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("application/json", resp.content_type)
+        data = json.loads(resp.data)
+        self.assertIn("model is required", data["error"])
+
+    def test_proxy_v1_chat_completions_arbitrary_query(self):
+        """POST /v1/chat/completions?任意参数 应返回 JSON 400（非 HTML 400）"""
+        resp = self.client.post("/v1/chat/completions?foo=bar", json={})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("application/json", resp.content_type)
+        data = json.loads(resp.data)
+        self.assertIn("model is required", data["error"])
+
 
 if __name__ == "__main__":
     unittest.main()
