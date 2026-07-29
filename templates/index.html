@@ -63,6 +63,10 @@ a { color: var(--link); font-size: 12px; text-decoration: none; }
 .controls { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
 .controls button { background: var(--btn-bg); border: 1px solid var(--btn-border); color: var(--btn-fg); padding: 6px 14px; border-radius: 5px; cursor: pointer; font-size: 12px; }
 .controls button.active { background: var(--btn-active-bg); border-color: var(--btn-active-border); color: var(--btn-active-fg); }
+.controls .date-inputs { display: inline-flex; align-items: center; gap: 6px; margin-left: 4px; }
+.controls .date-inputs input[type="date"] { background: var(--card-bg); border: 1px solid var(--btn-border); color: var(--fg); padding: 4px 8px; border-radius: 5px; font-size: 11px; font-family: inherit; outline: none; }
+.controls .date-inputs input[type="date"]:focus { border-color: var(--btn-active-border); }
+.controls .date-inputs span { color: var(--muted); font-size: 12px; }
 
 .stats { display: flex; gap: 12px; margin-bottom: 20px; }
 .stat { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 14px 18px; flex: 1; }
@@ -190,6 +194,12 @@ td:last-child, th:last-child { text-align: right; }
     <button data-range="30d" data-i18n="range30d">30天</button>
     <button data-range="today" data-i18n="rangeToday">今日</button>
     <button data-range="yesterday" data-i18n="rangeYesterday">昨日</button>
+    <button data-range="custom" data-i18n="rangeCustom">自定义</button>
+    <div class="date-inputs" id="dateInputs" style="display:none">
+      <input type="date" id="startDateInput">
+      <span>—</span>
+      <input type="date" id="endDateInput">
+    </div>
   </div>
 
   <div class="kanban-main">
@@ -247,7 +257,7 @@ let currentStart = null, currentEnd = null;
 const I18N = {
   zh: {
     pageTitle: 'AI Gateway',
-    range1h: '1小时', range24h: '24小时', range7d: '7天', range30d: '30天', rangeToday: '今日', rangeYesterday: '昨日',
+    range1h: '1小时', range24h: '24小时', range7d: '7天', range30d: '30天', rangeToday: '今日',     rangeYesterday: '昨日', rangeCustom: '自定义',
     statRequests: '对话次数', statInput: '输入 Token', statOutput: '输出 Token', statSpeed: 'Token/s',
     trendTitle: '用量趋势', modelsTrendTitle: '模型趋势', billingTitle: '各平台使用量', modelUsageTitle: '各模型使用量', recentTitle: '最近请求',
     colTime: '时间', colModel: '模型', colProvider: '平台', colInput: '输入', colOutput: '输出',
@@ -259,7 +269,7 @@ const I18N = {
   },
   en: {
     pageTitle: 'AI Gateway',
-    range1h: '1h', range24h: '24h', range7d: '7d', range30d: '30d', rangeToday: 'Today', rangeYesterday: 'Yesterday',
+    range1h: '1h', range24h: '24h', range7d: '7d', range30d: '30d', rangeToday: 'Today',     rangeYesterday: 'Yesterday', rangeCustom: 'Custom',
     statRequests: 'Conversations', statInput: 'Input Tokens', statOutput: 'Output Tokens', statSpeed: 'Token/s',
     trendTitle: 'Usage Trend', modelsTrendTitle: 'Models Trend', billingTitle: 'Provider Usage', modelUsageTitle: 'Model Usage', recentTitle: 'Recent Requests',
     colTime: 'Time', colModel: 'Model', colProvider: 'Provider', colInput: 'Input', colOutput: 'Output',
@@ -334,6 +344,13 @@ function initPrefs() {
     document.querySelectorAll('[data-range]').forEach(b => b.classList.remove('active'));
     const btn = document.querySelector(`[data-range="${savedRange}"]`);
     if (btn) btn.classList.add('active');
+    if (savedRange === 'custom') {
+      document.getElementById('dateInputs').style.display = 'inline-flex';
+      const s = localStorage.getItem('ag_custom_start');
+      const e = localStorage.getItem('ag_custom_end');
+      if (s) document.getElementById('startDateInput').value = s;
+      if (e) document.getElementById('endDateInput').value = e;
+    }
   }
   if (savedLayout) document.documentElement.setAttribute('data-layout', savedLayout);
   applyTheme();
@@ -743,7 +760,17 @@ function fetchAll() {
   const btn = document.querySelector('[data-range].active');
   const range = btn?.dataset?.range || '24h';
   let startDate, endDate;
-  if (range === 'today') {
+  if (range === 'custom') {
+    const sVal = document.getElementById('startDateInput').value;
+    const eVal = document.getElementById('endDateInput').value;
+    if (sVal && eVal) {
+      startDate = new Date(sVal + 'T00:00:00');
+      endDate = new Date(eVal + 'T23:59:59');
+    } else {
+      startDate = new Date(now - 24 * 3600000);
+      endDate = now;
+    }
+  } else if (range === 'today') {
     startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     endDate = now;
   } else if (range === 'yesterday') {
@@ -757,7 +784,10 @@ function fetchAll() {
   const s = localISO(startDate);
   const e = localISO(endDate);
   const durationMs = endDate - startDate;
-  const groupBy = ({ '1h':'minute', '24h':'hour', '7d':'day', '30d':'day', 'today':'hour', 'yesterday':'hour' })[range] || 'hour';
+  const durationHours = durationMs / 3600000;
+  const groupBy = range === 'custom'
+    ? (durationHours <= 1 ? 'minute' : durationHours <= 24 ? 'hour' : 'day')
+    : ({ '1h':'minute', '24h':'hour', '7d':'day', '30d':'day', 'today':'hour', 'yesterday':'hour' })[range] || 'hour';
   currentStart = s;
   currentEnd = e;
 
@@ -858,9 +888,41 @@ document.querySelectorAll('[data-range]').forEach(btn => {
     document.querySelectorAll('[data-range]').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     localStorage.setItem('ag_range', btn.dataset.range);
+    const dateInputs = document.getElementById('dateInputs');
+    if (btn.dataset.range === 'custom') {
+      const savedStart = localStorage.getItem('ag_custom_start');
+      const savedEnd = localStorage.getItem('ag_custom_end');
+      if (savedStart && savedEnd) {
+        document.getElementById('startDateInput').value = savedStart;
+        document.getElementById('endDateInput').value = savedEnd;
+      } else {
+        const now = new Date();
+        const today = localISO(now).slice(0, 10);
+        document.getElementById('startDateInput').value = today;
+        document.getElementById('endDateInput').value = today;
+      }
+      dateInputs.style.display = 'inline-flex';
+    } else {
+      dateInputs.style.display = 'none';
+    }
     page = 1;
     fetchAll();
     fetchRecent(1);
+  });
+});
+
+['startDateInput', 'endDateInput'].forEach(id => {
+  document.getElementById(id).addEventListener('change', () => {
+    if (!document.querySelector('[data-range="custom"].active')) return;
+    const s = document.getElementById('startDateInput').value;
+    const e = document.getElementById('endDateInput').value;
+    if (s && e) {
+      localStorage.setItem('ag_custom_start', s);
+      localStorage.setItem('ag_custom_end', e);
+      page = 1;
+      fetchAll();
+      fetchRecent(1);
+    }
   });
 });
 

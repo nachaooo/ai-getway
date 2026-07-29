@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_file
 
-VERSION = "0.6.9"
+VERSION = "0.6.10"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -55,6 +55,10 @@ _db_path = os.path.expandvars(_cfg("db_path", "DB_PATH", os.path.join(DATA_DIR, 
 # 兼容 config.json 中可能存在的相对路径：基于 EXE_DIR 解析为绝对路径
 DB_PATH = os.path.join(EXE_DIR, _db_path) if not os.path.isabs(_db_path) else _db_path
 
+# 对话内容单独存储，与 usage.db 隔离，便于单独删除/导出
+_conv_db_path = os.path.expandvars(_cfg("conv_db_path", "CONV_DB_PATH", os.path.join(DATA_DIR, "conversations.db")))
+CONV_DB_PATH = os.path.join(EXE_DIR, _conv_db_path) if not os.path.isabs(_conv_db_path) else _conv_db_path
+
 # ── database ──────────────────────────────────────────────────
 
 def get_db():
@@ -87,16 +91,46 @@ def ensure_schema(conn):
             created_at DATETIME DEFAULT (datetime('now', 'localtime'))
         )
     """)
-    for col, dtype in [("duration_ms", "INTEGER DEFAULT 0")]:
+    for col, dtype in [("duration_ms", "INTEGER DEFAULT 0"), ("conversation_id", "INTEGER")]:
         try:
             conn.execute(f"ALTER TABLE usage_logs ADD COLUMN {col} {dtype}")
         except sqlite3.OperationalError:
             pass
     conn.commit()
 
+def get_conv_db():
+    conn = sqlite3.connect(CONV_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
+
+def ensure_conv_schema(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            endpoint TEXT,
+            request_time DATETIME DEFAULT (datetime('now', 'localtime')),
+            messages TEXT NOT NULL,
+            response TEXT NOT NULL DEFAULT '',
+            system_prompt TEXT DEFAULT '',
+            last_user_message TEXT DEFAULT '',
+            prompt_tokens INTEGER DEFAULT 0,
+            completion_tokens INTEGER DEFAULT 0,
+            total_tokens INTEGER DEFAULT 0,
+            duration_ms INTEGER DEFAULT 0
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_conv_time ON conversations(request_time)")
+    conn.commit()
+
 def init_db():
     conn = get_db()
     ensure_schema(conn)
+    conn.close()
+    conn = get_conv_db()
+    ensure_conv_schema(conn)
     conn.close()
 
 # ── tokenizer ──────────────────────────────────────────────────
@@ -199,12 +233,20 @@ def _extract_content(data: dict) -> str:
         pass
     return ""
 
-def _log_usage(model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms=0):
+def _msg_text(content) -> str:
+    if isinstance(content, list):
+        return " ".join(
+            p.get("text", "") for p in content
+            if isinstance(p, dict) and p.get("type") == "text"
+        )
+    return str(content or "")
+
+def _log_usage(model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms=0, conversation_id=None):
     try:
         conn = get_db()
         conn.execute(
-            "INSERT INTO usage_logs (model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms),
+            "INSERT INTO usage_logs (model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms, conversation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms, conversation_id),
         )
         conn.commit()
         conn.close()
@@ -213,7 +255,36 @@ def _log_usage(model, provider, prompt_tokens, completion_tokens, total_tokens, 
     except Exception as e:
         print(f"  LOG FAIL: {e}")
 
-def _handle_stream(target_url, headers, body_data, model, provider_label, prompt_tokens, raw_body=None):
+def _log_conversation(model, provider, endpoint, messages, response, prompt_tokens=0, completion_tokens=0, total_tokens=0, duration_ms=0):
+    try:
+        system_prompt = ""
+        last_user = ""
+        for m in messages or []:
+            role = m.get("role")
+            if role == "system":
+                system_prompt = _msg_text(m.get("content"))
+            elif role == "user":
+                last_user = _msg_text(m.get("content"))
+        conn = get_conv_db()
+        cur = conn.execute(
+            "INSERT INTO conversations (model, provider, endpoint, messages, response, system_prompt, last_user_message, prompt_tokens, completion_tokens, total_tokens, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                model, provider, endpoint,
+                json.dumps(messages or [], ensure_ascii=False),
+                response or "",
+                system_prompt, last_user,
+                prompt_tokens, completion_tokens, total_tokens, duration_ms,
+            ),
+        )
+        conv_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+        return conv_id
+    except Exception as e:
+        print(f"  CONV LOG FAIL: {e}")
+        return None
+
+def _handle_stream(target_url, headers, body_data, model, provider_label, prompt_tokens, raw_body=None, messages=None):
     if raw_body:
         resp = requests.post(target_url, headers=headers, data=raw_body, stream=True, timeout=300, proxies=PROXIES)
     else:
@@ -287,7 +358,8 @@ def _handle_stream(target_url, headers, body_data, model, provider_label, prompt
             ct = count_tokens(model, complete_content)
         end_time = state.get("end_time") or datetime.now()
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
-        _log_usage(model, provider_label, pt, ct, pt + ct, path, duration_ms)
+        conv_id = _log_conversation(model, provider_label, path, messages, complete_content, pt, ct, pt + ct, duration_ms)
+        _log_usage(model, provider_label, pt, ct, pt + ct, path, duration_ms, conv_id)
 
     response = Response(stream_with_context(generate()), content_type=resp.headers.get("content-type", "text/event-stream"))
     response.call_on_close(do_log)
@@ -319,11 +391,12 @@ def _proxy_passthrough(upstream_url, body, model, stream):
     hostname = upstream_url.replace("https://", "").replace("http://", "").split("/")[0]
     provider_label = hostname.split(":")[0]
 
-    prompt_tokens = count_messages_tokens(model, body.get("messages", []))
+    messages = body.get("messages", [])
+    prompt_tokens = count_messages_tokens(model, messages)
     raw_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
     if stream:
-        return _handle_stream(upstream_url, headers, body, model, provider_label, prompt_tokens, raw_body)
+        return _handle_stream(upstream_url, headers, body, model, provider_label, prompt_tokens, raw_body, messages)
 
     print(f"  POST {upstream_url} | model={model} | stream={stream} | body={raw_body[:200].decode('utf-8', errors='replace')}")
     start_time = datetime.now()
@@ -338,9 +411,11 @@ def _proxy_passthrough(upstream_url, body, model, stream):
     usage = data.get("usage", {})
     if usage.get("prompt_tokens"):
         prompt_tokens = usage["prompt_tokens"]
-    completion_tokens = usage.get("completion_tokens", 0) or count_tokens(model, _extract_content(data))
+    content = _extract_content(data)
+    completion_tokens = usage.get("completion_tokens", 0) or count_tokens(model, content)
     duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-    _log_usage(model, provider_label, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, request.path, duration_ms)
+    conv_id = _log_conversation(model, provider_label, request.path, messages, content, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, duration_ms)
+    _log_usage(model, provider_label, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, request.path, duration_ms, conv_id)
     return jsonify(data)
 
 
@@ -558,6 +633,146 @@ def api_recent():
         "page": page,
         "page_size": page_size,
         "items": [dict(r) for r in rows],
+    })
+
+
+@app.route("/api/conversations")
+def api_conversations():
+    page = request.args.get("page", 1, type=int)
+    page_size = request.args.get("page_size", 50, type=int)
+    start = request.args.get("start")
+    end = request.args.get("end")
+    q = request.args.get("q")
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 50
+    offset = (page - 1) * page_size
+
+    conn = get_conv_db()
+    where_conditions = []
+    params = []
+    if start and end:
+        where_conditions.append("request_time BETWEEN ? AND ?")
+        params.extend([start, end])
+    if q:
+        where_conditions.append("(last_user_message LIKE ? OR response LIKE ?)")
+        params.extend([f"%{q}%", f"%{q}%"])
+    where = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
+
+    total = conn.execute(f"SELECT COUNT(*) as n FROM conversations {where}", params).fetchone()["n"]
+    rows = conn.execute(
+        f"SELECT * FROM conversations {where} ORDER BY request_time DESC LIMIT ? OFFSET ?",
+        params + [page_size, offset],
+    ).fetchall()
+    conn.close()
+
+    items = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["messages"] = json.loads(d.get("messages") or "[]")
+        except Exception:
+            d["messages"] = []
+        items.append(d)
+
+    return jsonify({
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": items,
+    })
+
+
+@app.route("/api/conversations/<int:conv_id>")
+def api_conversation_detail(conv_id):
+    conn = get_conv_db()
+    row = conn.execute("SELECT * FROM conversations WHERE id = ?", (conv_id,)).fetchone()
+    conn.close()
+    if not row:
+        return jsonify({"error": "not found"}), 404
+    d = dict(row)
+    try:
+        d["messages"] = json.loads(d.get("messages") or "[]")
+    except Exception:
+        d["messages"] = []
+    return jsonify(d)
+
+
+ARCHIVE_DIR = os.path.join(DATA_DIR, "archives")
+
+
+def _fetch_conversations(start=None, end=None):
+    conn = get_conv_db()
+    where = ""
+    params = []
+    if start and end:
+        where = "WHERE request_time BETWEEN ? AND ?"
+        params = [start, end]
+    rows = conn.execute(
+        f"SELECT * FROM conversations {where} ORDER BY request_time ASC", params
+    ).fetchall()
+    conn.close()
+    items = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["messages"] = json.loads(d.get("messages") or "[]")
+        except Exception:
+            d["messages"] = []
+        items.append(d)
+    return items
+
+
+@app.route("/api/conversations/export")
+def api_conversations_export():
+    start = request.args.get("start")
+    end = request.args.get("end")
+    items = _fetch_conversations(start, end)
+    return jsonify({
+        "period": {"start": start, "end": end},
+        "count": len(items),
+        "conversations": items,
+    })
+
+
+@app.route("/api/conversations/archive", methods=["POST"])
+def api_conversations_archive():
+    data = request.get_json(silent=True) or {}
+    start = data.get("start") or request.args.get("start")
+    end = data.get("end") or request.args.get("end")
+    if not (start and end):
+        return jsonify({"error": "start and end are required"}), 400
+
+    items = _fetch_conversations(start, end)
+    if not items:
+        return jsonify({"success": True, "archived": 0, "message": "该时间范围无对话记录"})
+
+    os.makedirs(ARCHIVE_DIR, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    fname = f"conversations_{start[:10]}_{end[:10]}_{stamp}.json"
+    fpath = os.path.join(ARCHIVE_DIR, fname)
+    with open(fpath, "w", encoding="utf-8") as f:
+        json.dump({
+            "period": {"start": start, "end": end},
+            "count": len(items),
+            "archived_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "conversations": items,
+        }, f, ensure_ascii=False, indent=2)
+
+    conn = get_conv_db()
+    cur = conn.execute(
+        "DELETE FROM conversations WHERE request_time BETWEEN ? AND ?", (start, end)
+    )
+    deleted = cur.rowcount
+    conn.commit()
+    conn.close()
+
+    print(f"  ARCHIVE: {deleted} conversations -> {fpath}")
+    return jsonify({
+        "success": True,
+        "archived": deleted,
+        "file": fpath,
     })
 
 
