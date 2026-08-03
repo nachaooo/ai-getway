@@ -1,9 +1,8 @@
 import sys, os, subprocess, webbrowser, time, socket, json, winreg, datetime
 
-BASE = os.path.dirname(os.path.abspath(__file__))
+_EXE_DIR = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
 if getattr(sys, 'frozen', False):
-    BASE = sys._MEIPASS
-    sys.path.insert(0, BASE)
+    sys.path.insert(0, _EXE_DIR)
 
 # ── worker mode ───────────────────────────────────────────────
 
@@ -18,7 +17,9 @@ if '--worker' in sys.argv:
 import pystray
 from PIL import Image
 
-EXE_PATH = sys.executable if getattr(sys, 'frozen', False) else os.path.join(BASE, "main.py")
+_FROZEN = getattr(sys, 'frozen', False)
+EXE_PATH = sys.executable
+_WORKER_ARGS = [EXE_PATH, "--worker"] if _FROZEN else [EXE_PATH, os.path.join(BASE, "main.py"), "--worker"]
 ICON_PNG = os.path.join(BASE, "static", "icon.png")
 ICON_ICO = os.path.join(BASE, "static", "icon.ico")
 LNK_NAME = "AI Gateway.lnk"
@@ -30,7 +31,7 @@ OLD_REG_NAME = "AI-Gateway-AutoStart"
 app_proc = None
 
 def _load_config():
-    cfg_path = os.path.join(os.path.dirname(EXE_PATH), "config.json")
+    cfg_path = os.path.join(BASE, "config.json")
     if os.path.exists(cfg_path):
         try:
             with open(cfg_path, encoding="utf-8") as f:
@@ -43,7 +44,7 @@ def _get_port():
     return _load_config().get("port", 5000)
 
 def _log_path():
-    log_dir = os.path.join(os.path.dirname(EXE_PATH), "logs")
+    log_dir = os.path.join(BASE, "logs")
     os.makedirs(log_dir, exist_ok=True)
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
     return os.path.join(log_dir, f"AI-Gateway-{date_str}.log")
@@ -55,8 +56,8 @@ def start_gateway():
     log_file.write(f"\n{'='*50}\n[{ts}] AI Gateway started\n{'='*50}\n")
     log_file.flush()
     app_proc = subprocess.Popen(
-        [EXE_PATH, "--worker"],
-        cwd=os.path.dirname(EXE_PATH),
+        _WORKER_ARGS,
+        cwd=BASE,
         stdout=log_file,
         stderr=subprocess.STDOUT,
         creationflags=subprocess.CREATE_NO_WINDOW,
@@ -121,12 +122,14 @@ def _ensure_ico():
 
 def _create_lnk():
     _ensure_ico()
+    target = EXE_PATH if _FROZEN else _WORKER_ARGS[0]
+    args = "" if _FROZEN else f"{_WORKER_ARGS[1]}"
     ps = f'''
     $WshShell = New-Object -comObject WScript.Shell
     $Shortcut = $WshShell.CreateShortcut({json.dumps(LNK_PATH)})
-    $Shortcut.TargetPath = {json.dumps(EXE_PATH)}
-    $Shortcut.Arguments = ""
-    $Shortcut.WorkingDirectory = {json.dumps(os.path.dirname(EXE_PATH))}
+    $Shortcut.TargetPath = {json.dumps(target)}
+    $Shortcut.Arguments = {json.dumps(args)}
+    $Shortcut.WorkingDirectory = {json.dumps(BASE)}
     $Shortcut.IconLocation = {json.dumps(ICON_ICO)}
     $Shortcut.Save()
     '''

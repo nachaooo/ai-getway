@@ -208,6 +208,8 @@ td:last-child, th:last-child { text-align: right; }
         <div class="stat"><div class="n" id="totalRequests">-</div><div class="mom" id="totalRequestsMom"></div><div class="l" data-i18n="statRequests">对话次数</div></div>
         <div class="stat"><div class="n" id="promptTokens">-</div><div class="mom" id="promptTokensMom"></div><div class="l" data-i18n="statInput">输入 Token</div></div>
         <div class="stat"><div class="n" id="completionTokens">-</div><div class="mom" id="completionTokensMom"></div><div class="l" data-i18n="statOutput">输出 Token</div></div>
+        <div class="stat"><div class="n" id="cachedTokens">-</div><div class="mom" id="cachedTokensMom"></div><div class="l">缓存命中 Token</div></div>
+        <div class="stat"><div class="n" id="reasoningTokens">-</div><div class="mom" id="reasoningTokensMom"></div><div class="l">推理 Token</div></div>
         <div class="stats-empty"></div>
       </div>
 
@@ -237,7 +239,7 @@ td:last-child, th:last-child { text-align: right; }
         <h2 data-i18n="recentTitle">最近请求</h2>
         <div class="table-scroll">
           <table>
-            <thead><tr><th data-i18n="colTime">时间</th><th data-i18n="colModel">模型</th><th data-i18n="colProvider">平台</th><th data-i18n="colInput">输入</th><th data-i18n="colOutput">输出</th><th data-i18n="statSpeed">Token/s</th></tr></thead>
+            <thead><tr><th data-i18n="colTime">时间</th><th data-i18n="colModel">模型</th><th data-i18n="colProvider">平台</th><th data-i18n="colInput">输入</th><th data-i18n="colOutput">输出</th><th>缓存命中</th><th>推理</th><th data-i18n="statSpeed">Token/s</th></tr></thead>
             <tbody id="recentTable"></tbody>
           </table>
         </div>
@@ -443,12 +445,13 @@ function chartColors() {
 function p(n) { return String(n).padStart(2, '0'); }
 function localISO(d) { return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
 function n(v) { return v === 0 ? '0' : (v || '-').toLocaleString(); }
+function cachePct(cached, prompt) { return prompt ? ` (${(cached / prompt * 100).toFixed(1)}%)` : ''; }
 
 function renderRecent(items) {
   const lang = document.documentElement.getAttribute('data-lang') || 'zh';
   const tb = document.getElementById('recentTable');
   if (items.length === 0) {
-    tb.innerHTML = `<tr><td colspan="6" class="empty">${I18N[lang].empty}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="8" class="empty">${I18N[lang].empty}</td></tr>`;
     document.getElementById('pages').innerHTML = '';
     return;
   }
@@ -459,7 +462,7 @@ function renderRecent(items) {
   const modelColor = theme === 'light' ? '#111' : '#ccc';
   tb.innerHTML = items.map(r => {
     const speed = r.duration_ms > 0 ? (r.completion_tokens * 1000 / r.duration_ms).toFixed(1) : '-';
-    return `<tr><td style="color:var(--muted)">${r.request_time.slice(5,19)}</td><td style="color:${modelColor}">${r.model}</td><td>${r.provider}</td><td>${n(r.prompt_tokens)}</td><td>${n(r.completion_tokens)}</td><td>${speed}</td></tr>`;
+    return `<tr><td style="color:var(--muted)">${r.request_time.slice(5,19)}</td><td style="color:${modelColor}">${r.model}</td><td>${r.provider}</td><td>${n(r.prompt_tokens)}</td><td>${n(r.completion_tokens)}</td><td>${n(r.cached_tokens)}${cachePct(r.cached_tokens, r.prompt_tokens)}</td><td>${n(r.reasoning_tokens)}</td><td>${speed}</td></tr>`;
   }).join('');
 
   let ph = '';
@@ -812,6 +815,8 @@ function fetchAll() {
     document.getElementById('totalRequests').textContent = n(d.totals.request_count);
     document.getElementById('promptTokens').textContent = n(d.totals.prompt_tokens);
     document.getElementById('completionTokens').textContent = n(d.totals.completion_tokens);
+    document.getElementById('cachedTokens').textContent = n(d.totals.cached_tokens) + cachePct(d.totals.cached_tokens, d.totals.prompt_tokens);
+    document.getElementById('reasoningTokens').textContent = n(d.totals.reasoning_tokens);
     const statsEmpty = document.querySelector('.stats-empty');
     const statCards = document.querySelectorAll('.stats > .stat');
     const allZero = !d.totals.request_count && !d.totals.prompt_tokens && !d.totals.completion_tokens;
@@ -824,6 +829,8 @@ function fetchAll() {
     updateMom('totalRequestsMom', d.totals.request_count, pd.totals.request_count);
     updateMom('promptTokensMom', d.totals.prompt_tokens, pd.totals.prompt_tokens);
     updateMom('completionTokensMom', d.totals.completion_tokens, pd.totals.completion_tokens);
+    updateMom('cachedTokensMom', d.totals.cached_tokens, pd.totals.cached_tokens);
+    updateMom('reasoningTokensMom', d.totals.reasoning_tokens, pd.totals.reasoning_tokens);
 
     const bl = document.getElementById('billingList');
     const billing = d.billing || {};
@@ -832,13 +839,15 @@ function fetchAll() {
       bl.innerHTML = '<div class="empty">' + (I18N[lang].empty) + '</div>';
     } else {
       entries.sort((a, b) => b[1].month_used - a[1].month_used);
-      let html = `<table><thead><tr><th>${I18N[lang].colProvider}</th><th style="text-align:right">${I18N[lang].statRequests}</th><th style="text-align:right">${I18N[lang].statInput}</th><th style="text-align:right">${I18N[lang].statOutput}</th><th style="text-align:right">${I18N[lang].statSpeed}</th></tr></thead><tbody>`;
+      let html = `<table><thead><tr><th>${I18N[lang].colProvider}</th><th style="text-align:right">${I18N[lang].statRequests}</th><th style="text-align:right">${I18N[lang].statInput}</th><th style="text-align:right">${I18N[lang].statOutput}</th><th style="text-align:right">缓存命中</th><th style="text-align:right">推理</th><th style="text-align:right">${I18N[lang].statSpeed}</th></tr></thead><tbody>`;
       for (const [prov, b] of entries) {
         html += `<tr>
           <td style="color:var(--heading)">${prov}</td>
           <td style="text-align:right">${n(b.month_used)}</td>
           <td style="text-align:right">${n(b.prompt_tokens)}</td>
           <td style="text-align:right">${n(b.completion_tokens)}</td>
+          <td style="text-align:right">${n(b.cached_tokens)}${cachePct(b.cached_tokens, b.prompt_tokens)}</td>
+          <td style="text-align:right">${n(b.reasoning_tokens)}</td>
           <td style="text-align:right">${b.tokens_per_second > 0 ? b.tokens_per_second.toFixed(1) : '-'}</td>
         </tr>`;
       }
@@ -853,13 +862,15 @@ function fetchAll() {
       ml.innerHTML = '<div class="empty">' + (I18N[lang].empty) + '</div>';
     } else {
       modelEntries.sort((a, b) => b[1].month_used - a[1].month_used);
-      let mhtml = `<table><thead><tr><th>${I18N[lang].colModel}</th><th style="text-align:right">${I18N[lang].statRequests}</th><th style="text-align:right">${I18N[lang].statInput}</th><th style="text-align:right">${I18N[lang].statOutput}</th><th style="text-align:right">${I18N[lang].statSpeed}</th></tr></thead><tbody>`;
+      let mhtml = `<table><thead><tr><th>${I18N[lang].colModel}</th><th style="text-align:right">${I18N[lang].statRequests}</th><th style="text-align:right">${I18N[lang].statInput}</th><th style="text-align:right">${I18N[lang].statOutput}</th><th style="text-align:right">缓存命中</th><th style="text-align:right">推理</th><th style="text-align:right">${I18N[lang].statSpeed}</th></tr></thead><tbody>`;
       for (const [mdl, b] of modelEntries) {
         mhtml += `<tr>
           <td style="color:var(--heading)">${mdl}</td>
           <td style="text-align:right">${n(b.month_used)}</td>
           <td style="text-align:right">${n(b.prompt_tokens)}</td>
           <td style="text-align:right">${n(b.completion_tokens)}</td>
+          <td style="text-align:right">${n(b.cached_tokens)}${cachePct(b.cached_tokens, b.prompt_tokens)}</td>
+          <td style="text-align:right">${n(b.reasoning_tokens)}</td>
           <td style="text-align:right">${b.tokens_per_second > 0 ? b.tokens_per_second.toFixed(1) : '-'}</td>
         </tr>`;
       }

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_file
 
-VERSION = "0.6.10"
+VERSION = "0.6.11"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -76,6 +76,8 @@ def ensure_schema(conn):
             prompt_tokens INTEGER NOT NULL DEFAULT 0,
             completion_tokens INTEGER NOT NULL DEFAULT 0,
             total_tokens INTEGER NOT NULL DEFAULT 0,
+            cached_tokens INTEGER NOT NULL DEFAULT 0,
+            reasoning_tokens INTEGER NOT NULL DEFAULT 0,
             request_time DATETIME DEFAULT (datetime('now', 'localtime')),
             endpoint TEXT,
             duration_ms INTEGER DEFAULT 0
@@ -91,7 +93,7 @@ def ensure_schema(conn):
             created_at DATETIME DEFAULT (datetime('now', 'localtime'))
         )
     """)
-    for col, dtype in [("duration_ms", "INTEGER DEFAULT 0"), ("conversation_id", "INTEGER")]:
+    for col, dtype in [("duration_ms", "INTEGER DEFAULT 0"), ("conversation_id", "INTEGER"), ("cached_tokens", "INTEGER DEFAULT 0"), ("reasoning_tokens", "INTEGER DEFAULT 0")]:
         try:
             conn.execute(f"ALTER TABLE usage_logs ADD COLUMN {col} {dtype}")
         except sqlite3.OperationalError:
@@ -241,17 +243,48 @@ def _msg_text(content) -> str:
         )
     return str(content or "")
 
-def _log_usage(model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms=0, conversation_id=None):
+def _extract_cached_tokens(usage):
+    """从 usage 中提取缓存命中 token 数，兼容多种上游返回格式。
+    - OpenAI / DeepSeek 兼容: usage.prompt_tokens_details.cached_tokens
+    - Anthropic 原生: usage.cache_read_input_tokens
+    - fangna 中转扩展: usage.prompt_cache_hit_tokens
+    """
+    if not isinstance(usage, dict):
+        return 0
+    candidates = []
+    details = usage.get("prompt_tokens_details") or {}
+    if details.get("cached_tokens"):
+        candidates.append(int(details["cached_tokens"]))
+    if usage.get("cache_read_input_tokens"):
+        candidates.append(int(usage["cache_read_input_tokens"]))
+    if usage.get("prompt_cache_hit_tokens"):
+        candidates.append(int(usage["prompt_cache_hit_tokens"]))
+    return max(candidates) if candidates else 0
+
+
+def _extract_reasoning_tokens(usage):
+    """从 usage 中提取推理 token 数（思维链消耗），兼容多种上游返回格式。
+    - OpenAI / DeepSeek / fangna 兼容: usage.completion_tokens_details.reasoning_tokens
+    - Anthropic 原生: usage.output_tokens_details.reasoning_tokens
+    """
+    if not isinstance(usage, dict):
+        return 0
+    details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
+    rt = details.get("reasoning_tokens")
+    return int(rt) if rt else 0
+
+
+def _log_usage(model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms=0, conversation_id=None, cached_tokens=0, reasoning_tokens=0):
     try:
         conn = get_db()
         conn.execute(
-            "INSERT INTO usage_logs (model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms, conversation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (model, provider, prompt_tokens, completion_tokens, total_tokens, endpoint, duration_ms, conversation_id),
+            "INSERT INTO usage_logs (model, provider, prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens, endpoint, duration_ms, conversation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (model, provider, prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens, endpoint, duration_ms, conversation_id),
         )
         conn.commit()
         conn.close()
         speed = f" {(total_tokens * 1000 // max(duration_ms, 1))}t/s" if duration_ms else ""
-        print(f"  LOG: {model} | {provider} | +{prompt_tokens}p +{completion_tokens}c = {total_tokens}t | {duration_ms}ms{speed}")
+        print(f"  LOG: {model} | {provider} | +{prompt_tokens}p +{completion_tokens}c = {total_tokens}t | cache={cached_tokens} reasoning={reasoning_tokens} | {duration_ms}ms{speed}")
     except Exception as e:
         print(f"  LOG FAIL: {e}")
 
@@ -285,10 +318,16 @@ def _log_conversation(model, provider, endpoint, messages, response, prompt_toke
         return None
 
 def _handle_stream(target_url, headers, body_data, model, provider_label, prompt_tokens, raw_body=None, messages=None):
-    if raw_body:
-        resp = requests.post(target_url, headers=headers, data=raw_body, stream=True, timeout=300, proxies=PROXIES)
-    else:
-        resp = requests.post(target_url, headers=headers, json=body_data, stream=True, timeout=300, proxies=PROXIES)
+    try:
+        if raw_body:
+            resp = requests.post(target_url, headers=headers, data=raw_body, stream=True, timeout=300, proxies=PROXIES)
+        else:
+            resp = requests.post(target_url, headers=headers, json=body_data, stream=True, timeout=300, proxies=PROXIES)
+    except requests.RequestException as e:
+        err = f"UPSTREAM REQUEST FAILED: {type(e).__name__}: {e}"
+        print(f"  {err}")
+        print(f"  TARGET: {target_url}")
+        return jsonify({"error": err}), 502
     if not resp.ok:
         err = resp.text[:500] if resp.text else "(empty body)"
         print(f"  UPSTREAM {resp.status_code} (stream): {err}")
@@ -353,13 +392,18 @@ def _handle_stream(target_url, headers, body_data, model, provider_label, prompt
             if not ct:
                 ct = count_tokens(model, complete_content)
                 print(f"  LOG: usage had 0 completion, fallback count={ct}")
+            cached = _extract_cached_tokens(usage_data)
+            reasoning = _extract_reasoning_tokens(usage_data)
+            print(f"  LOG: upstream usage: {json.dumps(usage_data, ensure_ascii=False)}")
         else:
             pt = prompt_tokens
             ct = count_tokens(model, complete_content)
+            cached = 0
+            reasoning = 0
         end_time = state.get("end_time") or datetime.now()
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
         conv_id = _log_conversation(model, provider_label, path, messages, complete_content, pt, ct, pt + ct, duration_ms)
-        _log_usage(model, provider_label, pt, ct, pt + ct, path, duration_ms, conv_id)
+        _log_usage(model, provider_label, pt, ct, pt + ct, path, duration_ms, conv_id, cached, reasoning)
 
     response = Response(stream_with_context(generate()), content_type=resp.headers.get("content-type", "text/event-stream"))
     response.call_on_close(do_log)
@@ -400,7 +444,13 @@ def _proxy_passthrough(upstream_url, body, model, stream):
 
     print(f"  POST {upstream_url} | model={model} | stream={stream} | body={raw_body[:200].decode('utf-8', errors='replace')}")
     start_time = datetime.now()
-    resp = requests.post(upstream_url, headers=headers, data=raw_body, timeout=300, proxies=PROXIES)
+    try:
+        resp = requests.post(upstream_url, headers=headers, data=raw_body, timeout=300, proxies=PROXIES)
+    except requests.RequestException as e:
+        err = f"UPSTREAM REQUEST FAILED: {type(e).__name__}: {e}"
+        print(f"  {err}")
+        print(f"  TARGET: {upstream_url}")
+        return jsonify({"error": err}), 502
     if not resp.ok:
         err = resp.text[:500] if resp.text else "(empty body)"
         print(f"  UPSTREAM {resp.status_code}: {err}")
@@ -413,9 +463,13 @@ def _proxy_passthrough(upstream_url, body, model, stream):
         prompt_tokens = usage["prompt_tokens"]
     content = _extract_content(data)
     completion_tokens = usage.get("completion_tokens", 0) or count_tokens(model, content)
+    cached_tokens = _extract_cached_tokens(usage)
+    reasoning_tokens = _extract_reasoning_tokens(usage)
+    if usage:
+        print(f"  LOG: upstream usage: {json.dumps(usage, ensure_ascii=False)}")
     duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
     conv_id = _log_conversation(model, provider_label, request.path, messages, content, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, duration_ms)
-    _log_usage(model, provider_label, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, request.path, duration_ms, conv_id)
+    _log_usage(model, provider_label, prompt_tokens, completion_tokens, prompt_tokens + completion_tokens, request.path, duration_ms, conv_id, cached_tokens, reasoning_tokens)
     return jsonify(data)
 
 
@@ -513,6 +567,8 @@ def api_usage():
                SUM(prompt_tokens) as prompt_tokens,
                SUM(completion_tokens) as completion_tokens,
                SUM(total_tokens) as total_tokens,
+               SUM(cached_tokens) as cached_tokens,
+               SUM(reasoning_tokens) as reasoning_tokens,
                COUNT(*) as request_count,
                model,
                provider
@@ -525,21 +581,25 @@ def api_usage():
     ).fetchall()
 
     by_model = {}
-    totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "request_count": 0}
+    totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "request_count": 0}
     timeline = []
 
     for r in rows:
         key = f"{r['model']} ({r['provider']})"
         if key not in by_model:
-            by_model[key] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "request_count": 0}
+            by_model[key] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0, "request_count": 0}
         by_model[key]["prompt_tokens"] += r["prompt_tokens"]
         by_model[key]["completion_tokens"] += r["completion_tokens"]
         by_model[key]["total_tokens"] += r["total_tokens"]
+        by_model[key]["cached_tokens"] += r["cached_tokens"]
+        by_model[key]["reasoning_tokens"] += r["reasoning_tokens"]
         by_model[key]["request_count"] += r["request_count"]
 
         totals["prompt_tokens"] += r["prompt_tokens"]
         totals["completion_tokens"] += r["completion_tokens"]
         totals["total_tokens"] += r["total_tokens"]
+        totals["cached_tokens"] += r["cached_tokens"]
+        totals["reasoning_tokens"] += r["reasoning_tokens"]
         totals["request_count"] += r["request_count"]
 
         timeline.append({
@@ -550,12 +610,12 @@ def api_usage():
         })
 
     month_rows = conn.execute(
-        f"SELECT provider, COUNT(*) as cnt, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(duration_ms) as duration_ms FROM usage_logs WHERE {where_clause} GROUP BY provider",
+        f"SELECT provider, COUNT(*) as cnt, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(cached_tokens) as cached_tokens, SUM(reasoning_tokens) as reasoning_tokens, SUM(duration_ms) as duration_ms FROM usage_logs WHERE {where_clause} GROUP BY provider",
         params,
     ).fetchall()
 
     model_rows = conn.execute(
-        f"SELECT model, COUNT(*) as cnt, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(duration_ms) as duration_ms FROM usage_logs WHERE {where_clause} GROUP BY model",
+        f"SELECT model, COUNT(*) as cnt, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, SUM(cached_tokens) as cached_tokens, SUM(reasoning_tokens) as reasoning_tokens, SUM(duration_ms) as duration_ms FROM usage_logs WHERE {where_clause} GROUP BY model",
         params,
     ).fetchall()
     conn.close()
@@ -572,6 +632,8 @@ def api_usage():
             "month_used": row["cnt"],
             "prompt_tokens": row["prompt_tokens"] or 0,
             "completion_tokens": row["completion_tokens"] or 0,
+            "cached_tokens": row["cached_tokens"] or 0,
+            "reasoning_tokens": row["reasoning_tokens"] or 0,
             "tokens_per_second": tokens_per_second,
         }
 
@@ -587,6 +649,8 @@ def api_usage():
             "month_used": row["cnt"],
             "prompt_tokens": row["prompt_tokens"] or 0,
             "completion_tokens": row["completion_tokens"] or 0,
+            "cached_tokens": row["cached_tokens"] or 0,
+            "reasoning_tokens": row["reasoning_tokens"] or 0,
             "tokens_per_second": tokens_per_second,
         }
 
