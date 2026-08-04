@@ -112,6 +112,22 @@ td:last-child, th:last-child { text-align: right; }
 [data-layout="kanban"] .pages { flex-shrink: 0; margin-top: 8px; }
 [data-layout="kanban"] h2 { flex-shrink: 0; }
 
+/* 活动分析 */
+.insights-controls { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.insights-controls button { background: var(--btn-bg); border: 1px solid var(--btn-border); color: var(--btn-fg); padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+.insights-controls button.active { background: var(--btn-active-bg); border-color: var(--btn-active-border); color: var(--btn-active-fg); }
+.insight-period { border-bottom: 1px solid var(--table-border); padding: 8px 0; }
+.insight-period:last-child { border-bottom: none; }
+.insight-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 12px; }
+.insight-head b { color: var(--heading); }
+.insight-head .muted { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.insight-summary { color: var(--dim); font-size: 12px; margin: 4px 0; }
+.insight-topic { margin: 4px 0; }
+.topic-name { color: var(--heading); font-size: 12px; font-weight: 500; }
+.insight-topic ul { margin: 2px 0 0 18px; padding: 0; }
+.insight-topic li { color: var(--dim); font-size: 12px; line-height: 1.5; }
+[data-layout="kanban"] #insightsList { flex: 1; overflow-y: auto; min-height: 0; }
+
 /* 模态框样式 */
 .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; }
 .modal-content { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; width: 100%; max-width: 700px; max-height: 90vh; display: flex; flex-direction: column; }
@@ -173,6 +189,10 @@ td:last-child, th:last-child { text-align: right; }
             <span data-i18n="configModelUsage">模型使用量</span>
           </label>
           <label class="dropdown-item">
+            <input type="checkbox" data-section="insights" checked onchange="toggleSection('insights')">
+            <span data-i18n="configInsights">活动分析</span>
+          </label>
+          <label class="dropdown-item">
             <input type="checkbox" data-section="recent" checked onchange="toggleSection('recent')">
             <span data-i18n="configRecent">最近请求</span>
           </label>
@@ -232,6 +252,16 @@ td:last-child, th:last-child { text-align: right; }
         <h2 data-i18n="modelUsageTitle">各模型使用量</h2>
         <div id="modelUsageList"></div>
       </div>
+
+      <div class="section">
+        <h2 data-i18n="insightsTitle">活动分析</h2>
+        <div class="insights-controls">
+          <button class="active" data-insight-granularity="day" data-i18n="insightsDay">按天</button>
+          <button data-insight-granularity="week" data-i18n="insightsWeek">按周</button>
+          <button onclick="loadInsights(true)" data-i18n="insightsRefresh">重新分析</button>
+        </div>
+        <div id="insightsList"></div>
+      </div>
     </div>
 
     <div class="kanban-right">
@@ -267,7 +297,9 @@ const I18N = {
     layoutDefault: '默认', layoutKanban: '看板',
     dbExport: '导出', dbImport: '导入',
     configStats: '统计数据', configTrend: '用量趋势', configModelsTrend: '模型趋势',
-    configBilling: '平台使用量', configModelUsage: '模型使用量', configRecent: '最近请求',
+    configBilling: '平台使用量', configModelUsage: '模型使用量', configRecent: '最近请求', configInsights: '活动分析',
+    insightsTitle: '活动分析', insightsDay: '按天', insightsWeek: '按周', insightsRefresh: '重新分析',
+    insightsLoading: '分析中…', insightsError: '分析失败，请重试',
   },
   en: {
     pageTitle: 'AI Gateway',
@@ -279,7 +311,9 @@ const I18N = {
     layoutDefault: 'Default', layoutKanban: 'Kanban',
     dbExport: 'Export', dbImport: 'Import',
     configStats: 'Statistics', configTrend: 'Usage Trend', configModelsTrend: 'Models Trend',
-    configBilling: 'Provider Usage', configModelUsage: 'Model Usage', configRecent: 'Recent Requests',
+    configBilling: 'Provider Usage', configModelUsage: 'Model Usage', configRecent: 'Recent Requests', configInsights: 'Activity Insights',
+    insightsTitle: 'Activity Insights', insightsDay: 'Daily', insightsWeek: 'Weekly', insightsRefresh: 'Re-analyze',
+    insightsLoading: 'Analyzing…', insightsError: 'Analysis failed, please retry',
   }
 };
 
@@ -378,7 +412,7 @@ function toggleSection(section) {
 function applySectionVisibility(sections) {
   const defaultVisibility = {
     stats: true, trendChart: true, modelsTrendChart: true,
-    billing: true, modelUsage: true, recent: true
+    billing: true, modelUsage: true, insights: true, recent: true
   };
   const visibility = { ...defaultVisibility, ...sections };
   
@@ -402,6 +436,9 @@ function applySectionVisibility(sections) {
         break;
       case 'modelUsage':
         element = document.querySelector('.section:has(#modelUsageList)');
+        break;
+      case 'insights':
+        element = document.querySelector('.section:has(#insightsList)');
         break;
       case 'recent':
         element = document.querySelector('.kanban-right .section');
@@ -894,6 +931,68 @@ function fetchRecent(p) {
     });
 }
 
+let insightsGranularity = 'day';
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function loadInsights(force) {
+  if (!currentStart || !currentEnd) return;
+  const lang = document.documentElement.getAttribute('data-lang') || 'zh';
+  const list = document.getElementById('insightsList');
+  const params = { granularity: insightsGranularity, start: currentStart, end: currentEnd };
+  if (force) params.refresh = '1';
+  list.innerHTML = '<div class="empty">' + I18N[lang].insightsLoading + '</div>';
+  fetch('/api/insights?' + new URLSearchParams(params))
+    .then(r => r.json())
+    .then(d => renderInsights(d))
+    .catch(() => {
+      list.innerHTML = '<div class="empty">' + I18N[lang].insightsError + '</div>';
+    });
+}
+
+function renderInsights(d) {
+  const lang = document.documentElement.getAttribute('data-lang') || 'zh';
+  const i18n = I18N[lang];
+  const list = document.getElementById('insightsList');
+  if (d.error) { list.innerHTML = `<div class="empty">${escapeHtml(d.error)}</div>`; return; }
+  if (!d.periods || d.periods.length === 0) { list.innerHTML = `<div class="empty">${i18n.empty}</div>`; return; }
+  let html = '';
+  for (const p of d.periods) {
+    html += `<div class="insight-period">
+      <div class="insight-head"><b>${escapeHtml(p.period)}</b><span class="muted">${n(p.message_count)} msgs · ${n(p.total_tokens)} tokens</span></div>`;
+    if (p.summary) html += `<div class="insight-summary">${escapeHtml(p.summary)}</div>`;
+    if (p.topics && p.topics.length) {
+      html += '<div class="insight-topics">';
+      for (const t of p.topics) {
+        html += `<div class="insight-topic"><span class="topic-name">${escapeHtml(t.topic)}</span>`;
+        if (t.activities && t.activities.length) {
+          html += '<ul>';
+          for (const a of t.activities) html += `<li>${escapeHtml(a)}</li>`;
+          html += '</ul>';
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  if (d.failed && d.failed.length) {
+    html += `<div class="empty">${escapeHtml(d.failed.join(', '))} ${i18n.insightsError}</div>`;
+  }
+  list.innerHTML = html;
+}
+
+document.querySelectorAll('[data-insight-granularity]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-insight-granularity]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    insightsGranularity = btn.dataset.insightGranularity;
+    loadInsights(false);
+  });
+});
+
 document.querySelectorAll('[data-range]').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('[data-range]').forEach(b => b.classList.remove('active'));
@@ -919,6 +1018,7 @@ document.querySelectorAll('[data-range]').forEach(btn => {
     page = 1;
     fetchAll();
     fetchRecent(1);
+    loadInsights(false);
   });
 });
 
@@ -933,6 +1033,7 @@ document.querySelectorAll('[data-range]').forEach(btn => {
       page = 1;
       fetchAll();
       fetchRecent(1);
+      loadInsights(false);
     }
   });
 });
@@ -941,6 +1042,7 @@ initPrefs();
 
 fetchAll();
 fetchRecent(1);
+loadInsights(false);
 
 setInterval(() => { fetchAll(); fetchRecent(page); }, 15000);
 

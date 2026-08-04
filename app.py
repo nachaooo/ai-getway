@@ -983,6 +983,213 @@ def api_db_upload():
     return jsonify({"success": True, "message": "导入成功"})
 
 
+# ── insights: 每日/每周活动分析 ──────────────────────────────
+
+INSIGHTS_TOPICS = ["前端/UI", "后端/API", "数据分析", "模型评测", "构建部署", "性能优化", "文档记录", "通用编程", "其他"]
+INSIGHTS_CACHE = {}
+INSIGHTS_CACHE_TTL = 1800
+INSIGHTS_MAX_DAYS = 60
+INSIGHTS_MAX_MSGS = 30
+
+
+def _clean_insight_message(text):
+    if not text:
+        return None
+    if "<system-reminder>" in text:
+        text = text.split("<system-reminder>")[0]
+    text = text.strip()
+    if not text or len(text) < 3:
+        return None
+    lower = text.lower()
+    if lower.startswith(("continue if", "help me plan", "update the")):
+        return None
+    if "operational mode has changed" in lower:
+        return None
+    return text
+
+
+def _insight_bucket_key(dt_str, granularity):
+    try:
+        d = datetime.strptime(dt_str[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return dt_str[:10]
+    if granularity == "day":
+        return d.strftime("%Y-%m-%d")
+    iso = d.isocalendar()
+    return f"{iso[0]}-W{iso[1]:02d}"
+
+
+def _get_insight_model(model_name=""):
+    """分类模型来源优先级：1) config.json insights 块  2) models 表指定模型  3) models 表默认模型"""
+    icfg = CONFIG.get("insights") or {}
+    if model_name:
+        if icfg.get("model") == model_name and icfg.get("api_base"):
+            return {"model": icfg["model"], "api_base": icfg["api_base"], "api_key": icfg.get("api_key", "")}
+        conn = get_db()
+        try:
+            return conn.execute("SELECT model, api_base, api_key FROM models WHERE model = ?", (model_name,)).fetchone()
+        finally:
+            conn.close()
+    if icfg.get("api_base"):
+        return {"model": icfg.get("model", ""), "api_base": icfg["api_base"], "api_key": icfg.get("api_key", "")}
+    conn = get_db()
+    try:
+        return conn.execute("SELECT model, api_base, api_key FROM models WHERE is_default = 1 ORDER BY id LIMIT 1").fetchone()
+    finally:
+        conn.close()
+
+
+def _parse_insight_json(content):
+    if not content:
+        return None
+    content = content.strip()
+    try:
+        return json.loads(content)
+    except Exception:
+        pass
+    try:
+        s = content.find("{")
+        e = content.rfind("}")
+        if 0 <= s < e:
+            return json.loads(content[s:e + 1])
+    except Exception:
+        pass
+    return None
+
+
+def _normalize_insight(data):
+    if not isinstance(data, dict):
+        return None
+    summary = str(data.get("summary", "") or "").strip()
+    topics = []
+    for t in data.get("topics") or []:
+        if not isinstance(t, dict):
+            continue
+        name = str(t.get("topic", "") or "").strip()
+        acts = [str(a).strip() for a in (t.get("activities") or []) if str(a).strip()]
+        if name:
+            topics.append({"topic": name, "activities": acts[:20], "count": len(acts)})
+    if not topics and not summary:
+        return None
+    return {"summary": summary, "topics": topics}
+
+
+def _llm_classify_insight(model_cfg, label, messages, total_tokens):
+    api_base = model_cfg["api_base"].rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    if model_cfg.get("api_key"):
+        headers["Authorization"] = f"Bearer {model_cfg['api_key']}"
+    sys_prompt = (
+        "你是 AI 使用记录分析助手。根据用户在指定时间段内发给 AI 的消息，归纳出用户实际在做什么工作。\n"
+        "输出必须 ONLY 是合法 JSON（不要任何其他文字），格式：\n"
+        '{"summary": "一句话总结该时段用户在做什么", "topics": [{"topic": "主题名", "activities": ["具体活动1", "具体活动2"]}]}\n'
+        "要求：\n"
+        "1. topic 只能从以下主题中选择：" + "、".join(INSIGHTS_TOPICS) + "。\n"
+        "2. 忽略系统提示、指令类（如\"继续\"\"执行\"）以及纯工具操作消息，聚焦用户真实意图。\n"
+        "3. activities 每条用简短动词短语概括一项实际工作，尽量具体。\n"
+        "4. 没有匹配的主题就不列出，summary 允许留空字符串。"
+    )
+    msg_list = "\n".join(f"- {m}" for m in messages)
+    user_msg = f"时间段：{label}（{len(messages)} 条去重消息，总消耗约 {total_tokens} tokens）\n\n用户消息：\n{msg_list}"
+    body = {
+        "model": model_cfg["model"],
+        "messages": [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": user_msg},
+        ],
+        "stream": False,
+        "temperature": 0.2,
+    }
+    try:
+        resp = requests.post(api_base + "/chat/completions", headers=headers, json=body, timeout=120, proxies=PROXIES)
+        if not resp.ok:
+            print(f"  INSIGHT LLM {resp.status_code}: {resp.text[:300]}")
+            return None
+        data = resp.json()
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        return _normalize_insight(_parse_insight_json(content))
+    except Exception as e:
+        print(f"  INSIGHT LLM FAIL: {e}")
+        return None
+
+
+@app.route("/api/insights")
+def api_insights():
+    granularity = request.args.get("granularity", "day")
+    if granularity not in ("day", "week"):
+        granularity = "day"
+    start = request.args.get("start") or (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d 00:00:00")
+    end = request.args.get("end") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    model_name = request.args.get("model", "")
+    refresh = request.args.get("refresh") == "1"
+
+    try:
+        s_dt = datetime.strptime(start[:10], "%Y-%m-%d")
+        e_dt = datetime.strptime(end[:10], "%Y-%m-%d")
+    except ValueError:
+        return jsonify({"error": "无效的时间范围"}), 400
+
+    truncated = False
+    if (e_dt - s_dt).days > INSIGHTS_MAX_DAYS:
+        e_dt = s_dt + timedelta(days=INSIGHTS_MAX_DAYS)
+        end = e_dt.strftime("%Y-%m-%d 23:59:59")
+        truncated = True
+
+    cache_key = f"{granularity}|{start}|{end}|{model_name}"
+    if not refresh:
+        hit = INSIGHTS_CACHE.get(cache_key)
+        if hit and time.time() - hit["ts"] < INSIGHTS_CACHE_TTL:
+            return jsonify(hit["data"])
+
+    row = _get_insight_model(model_name)
+    if not row:
+        return jsonify({"error": "未配置分类模型：请在 模型 中添加，或 ?model=<模型名>"}), 400
+    model_cfg = {"model": row["model"], "api_base": row["api_base"], "api_key": row["api_key"]}
+
+    conn = get_conv_db()
+    rows = conn.execute(
+        "SELECT request_time, last_user_message, total_tokens FROM conversations WHERE request_time BETWEEN ? AND ? ORDER BY request_time ASC",
+        (start, end),
+    ).fetchall()
+    conn.close()
+
+    buckets = {}
+    for r in rows:
+        key = _insight_bucket_key(r["request_time"], granularity)
+        b = buckets.setdefault(key, {"messages": set(), "tokens": 0})
+        msg = _clean_insight_message(r["last_user_message"])
+        if msg:
+            b["messages"].add(msg)
+        b["tokens"] += r["total_tokens"] or 0
+
+    periods = []
+    failed = []
+    for label in sorted(buckets):
+        b = buckets[label]
+        msgs = sorted(b["messages"])[:INSIGHTS_MAX_MSGS]
+        result = _llm_classify_insight(model_cfg, label, msgs, b["tokens"])
+        if result is None:
+            failed.append(label)
+            continue
+        periods.append({
+            "period": label,
+            "summary": result["summary"],
+            "topics": result["topics"],
+            "message_count": len(msgs),
+            "total_tokens": b["tokens"],
+        })
+
+    data = {
+        "granularity": granularity,
+        "periods": periods,
+        "failed": failed,
+        "truncated": truncated,
+        "analyzed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    INSIGHTS_CACHE[cache_key] = {"ts": time.time(), "data": data}
+    return jsonify(data)
+
+
 init_db()
 
 if __name__ == "__main__":
