@@ -1,6 +1,7 @@
 import sys, os, subprocess, webbrowser, time, socket, json, winreg, datetime
 
 _EXE_DIR = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+_RES_DIR = sys._MEIPASS if getattr(sys, 'frozen', False) else _EXE_DIR
 if getattr(sys, 'frozen', False):
     sys.path.insert(0, _EXE_DIR)
 
@@ -19,9 +20,9 @@ from PIL import Image
 
 _FROZEN = getattr(sys, 'frozen', False)
 EXE_PATH = sys.executable
-_WORKER_ARGS = [EXE_PATH, "--worker"] if _FROZEN else [EXE_PATH, os.path.join(BASE, "main.py"), "--worker"]
-ICON_PNG = os.path.join(BASE, "static", "icon.png")
-ICON_ICO = os.path.join(BASE, "static", "icon.ico")
+_WORKER_ARGS = [EXE_PATH, "--worker"] if _FROZEN else [EXE_PATH, os.path.join(_EXE_DIR, "main.py"), "--worker"]
+ICON_PNG = os.path.join(_RES_DIR, "static", "icon.png")
+ICON_ICO = os.path.join(_RES_DIR, "static", "icon.ico")
 LNK_NAME = "AI Gateway.lnk"
 STARTUP_DIR = os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup")
 LNK_PATH = os.path.join(STARTUP_DIR, LNK_NAME)
@@ -31,7 +32,7 @@ OLD_REG_NAME = "AI-Gateway-AutoStart"
 app_proc = None
 
 def _load_config():
-    cfg_path = os.path.join(BASE, "config.json")
+    cfg_path = os.path.join(_EXE_DIR, "config.json")
     if os.path.exists(cfg_path):
         try:
             with open(cfg_path, encoding="utf-8") as f:
@@ -44,7 +45,7 @@ def _get_port():
     return _load_config().get("port", 5000)
 
 def _log_path():
-    log_dir = os.path.join(BASE, "logs")
+    log_dir = os.path.join(_EXE_DIR, "logs")
     os.makedirs(log_dir, exist_ok=True)
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
     return os.path.join(log_dir, f"AI-Gateway-{date_str}.log")
@@ -57,7 +58,7 @@ def start_gateway():
     log_file.flush()
     app_proc = subprocess.Popen(
         _WORKER_ARGS,
-        cwd=BASE,
+        cwd=_EXE_DIR,
         stdout=log_file,
         stderr=subprocess.STDOUT,
         creationflags=subprocess.CREATE_NO_WINDOW,
@@ -129,7 +130,7 @@ def _create_lnk():
     $Shortcut = $WshShell.CreateShortcut({json.dumps(LNK_PATH)})
     $Shortcut.TargetPath = {json.dumps(target)}
     $Shortcut.Arguments = {json.dumps(args)}
-    $Shortcut.WorkingDirectory = {json.dumps(BASE)}
+    $Shortcut.WorkingDirectory = {json.dumps(_EXE_DIR)}
     $Shortcut.IconLocation = {json.dumps(ICON_ICO)}
     $Shortcut.Save()
     '''
