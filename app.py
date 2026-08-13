@@ -3,6 +3,7 @@ import sys
 import json
 import shutil
 import time
+import hashlib
 import sqlite3
 import tempfile
 from datetime import datetime, timedelta
@@ -10,7 +11,7 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_file
 
-VERSION = "0.6.12"
+VERSION = "0.6.15"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -103,28 +104,63 @@ def ensure_schema(conn):
 def get_conv_db():
     conn = sqlite3.connect(CONV_DB_PATH)
     conn.row_factory = sqlite3.Row
+    # 历史数据可能含无效 UTF-8 字节，宽松解码避免读取报错
+    conn.text_factory = lambda b: b.decode("utf-8", errors="replace")
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 def ensure_conv_schema(conn):
+    """新结构：conversations 精简 + 内容去重表（system_prompts / message_contents / messages）。"""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(conversations)")]
+    if cols and "messages" in cols:
+        raise RuntimeError(
+            "conversations.db 仍是旧结构（含 messages 大字段）。请先运行 python scripts/migrate_conv_db.py 迁移后再启动。"
+        )
     conn.execute("""
         CREATE TABLE IF NOT EXISTS conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER PRIMARY KEY,
             model TEXT NOT NULL,
             provider TEXT NOT NULL,
             endpoint TEXT,
             request_time DATETIME DEFAULT (datetime('now', 'localtime')),
-            messages TEXT NOT NULL,
+            system_prompt_id INTEGER,
+            last_user_message TEXT,
             response TEXT NOT NULL DEFAULT '',
-            system_prompt TEXT DEFAULT '',
-            last_user_message TEXT DEFAULT '',
             prompt_tokens INTEGER DEFAULT 0,
             completion_tokens INTEGER DEFAULT 0,
             total_tokens INTEGER DEFAULT 0,
             duration_ms INTEGER DEFAULT 0
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS system_prompts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_hash TEXT NOT NULL UNIQUE,
+            content TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS message_contents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_hash TEXT NOT NULL,
+            extra_hash TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '',
+            extra TEXT NOT NULL DEFAULT '',
+            is_list INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(content_hash, extra_hash)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL,
+            seq INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content_id INTEGER NOT NULL
+        )
+    """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_conv_time ON conversations(request_time)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, seq)")
     conn.commit()
 
 def init_db():
@@ -134,6 +170,144 @@ def init_db():
     conn = get_conv_db()
     ensure_conv_schema(conn)
     conn.close()
+    # 迁移脚本在服务运行中无法 VACUUM（需独占锁），留下标记；启动时独占连接压缩
+    marker = CONV_DB_PATH + ".needs_vacuum"
+    if os.path.exists(marker):
+        try:
+            print("检测到 VACUUM 标记，压缩 conversations.db ...")
+            conn = sqlite3.connect(CONV_DB_PATH, timeout=60)
+            conn.execute("VACUUM")
+            conn.commit()
+            conn.close()
+            os.remove(marker)
+            print("VACUUM 完成")
+        except Exception as e:
+            print(f"启动 VACUUM 失败: {e}")
+
+# ── 对话内容去重与重建 ────────────────────────────────────────
+
+def _content_hash(content, is_list):
+    """内容哈希，与 scripts/migrate_conv_db.py 保持一致（str/list 前缀区分）。"""
+    if is_list:
+        raw = "l:" + json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    else:
+        raw = "s:" + str(content)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+def _get_or_insert_system_prompt(conn, sp_text):
+    if not sp_text:
+        return None
+    h = _content_hash(sp_text, False)
+    row = conn.execute("SELECT id FROM system_prompts WHERE content_hash = ?", (h,)).fetchone()
+    if row:
+        return row[0]
+    conn.execute("INSERT OR IGNORE INTO system_prompts (content_hash, content) VALUES (?, ?)", (h, sp_text))
+    return conn.execute("SELECT id FROM system_prompts WHERE content_hash = ?", (h,)).fetchone()[0]
+
+def _get_or_insert_message_content(conn, content, is_list, extra):
+    h = _content_hash(content, is_list)
+    eh = _content_hash(extra, False) if extra else ""
+    row = conn.execute(
+        "SELECT id FROM message_contents WHERE content_hash = ? AND extra_hash = ?", (h, eh)
+    ).fetchone()
+    if row:
+        return row[0]
+    stored = json.dumps(content, ensure_ascii=False) if is_list else content
+    conn.execute(
+        "INSERT OR IGNORE INTO message_contents (content_hash, extra_hash, content, extra, is_list) VALUES (?, ?, ?, ?, ?)",
+        (h, eh, stored, extra, 1 if is_list else 0),
+    )
+    return conn.execute(
+        "SELECT id FROM message_contents WHERE content_hash = ? AND extra_hash = ?", (h, eh)
+    ).fetchone()[0]
+
+def _rebuild_messages(conn, conv_id):
+    """从 messages + message_contents 重建原始 messages 数组。"""
+    rows = conn.execute(
+        """SELECT m.seq, m.role, mc.content, mc.extra, mc.is_list FROM messages m
+           JOIN message_contents mc ON m.content_id = mc.id
+           WHERE m.conversation_id = ? ORDER BY m.seq""",
+        (conv_id,),
+    ).fetchall()
+    out = []
+    for seq, role, content, extra, is_list in rows:
+        msg = {"role": role}
+        if is_list:
+            try:
+                msg["content"] = json.loads(content)
+            except Exception:
+                msg["content"] = []
+        else:
+            msg["content"] = content
+        if extra:
+            try:
+                msg.update(json.loads(extra))
+            except Exception:
+                pass
+        out.append(msg)
+    return out
+
+def _conv_to_dict(conn, row):
+    d = dict(row)
+    try:
+        d["messages"] = _rebuild_messages(conn, d["id"])
+    except Exception:
+        d["messages"] = []
+    return d
+
+def _conv_to_dict_batch(conn, rows):
+    """批量重建多条会话的 messages + system_prompt，避免 N+1 查询。"""
+    items = []
+    if not rows:
+        return items
+    conv_ids = [r["id"] for r in rows]
+    id_ph = ",".join("?" * len(conv_ids))
+
+    msgs_map = {cid: [] for cid in conv_ids}
+    msg_rows = conn.execute(
+        f"""SELECT m.conversation_id, m.seq, m.role, mc.content, mc.extra, mc.is_list
+            FROM messages m JOIN message_contents mc ON m.content_id = mc.id
+            WHERE m.conversation_id IN ({id_ph}) ORDER BY m.conversation_id, m.seq""",
+        conv_ids,
+    ).fetchall()
+    for cid, seq, role, content, extra, is_list in msg_rows:
+        msg = {"role": role}
+        if is_list:
+            try:
+                msg["content"] = json.loads(content)
+            except Exception:
+                msg["content"] = []
+        else:
+            msg["content"] = content
+        if extra:
+            try:
+                msg.update(json.loads(extra))
+            except Exception:
+                pass
+        msgs_map[cid].append(msg)
+
+    sp_ids = set(r["system_prompt_id"] for r in rows if r["system_prompt_id"])
+    sp_map = {}
+    if sp_ids:
+        sp_ph = ",".join("?" * len(sp_ids))
+        for sid, content in conn.execute(
+            f"SELECT id, content FROM system_prompts WHERE id IN ({sp_ph})", list(sp_ids)
+        ).fetchall():
+            sp_map[sid] = content
+
+    for r in rows:
+        d = dict(r)
+        d["messages"] = msgs_map.get(r["id"], [])
+        sp_id = d.get("system_prompt_id")
+        d["system_prompt"] = sp_map.get(sp_id, "") if sp_id else ""
+        items.append(d)
+    return items
+
+def _msg_content(content):
+    """content 归一化为 (value, is_list)，与迁移脚本一致。"""
+    if isinstance(content, list):
+        return content, True
+    return str(content or ""), False
 
 # ── tokenizer ──────────────────────────────────────────────────
 
@@ -299,17 +473,32 @@ def _log_conversation(model, provider, endpoint, messages, response, prompt_toke
             elif role == "user":
                 last_user = _msg_text(m.get("content"))
         conn = get_conv_db()
+        sp_id = _get_or_insert_system_prompt(conn, system_prompt)
         cur = conn.execute(
-            "INSERT INTO conversations (model, provider, endpoint, messages, response, system_prompt, last_user_message, prompt_tokens, completion_tokens, total_tokens, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO conversations (model, provider, endpoint, system_prompt_id, last_user_message, response, prompt_tokens, completion_tokens, total_tokens, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 model, provider, endpoint,
-                json.dumps(messages or [], ensure_ascii=False),
+                sp_id, last_user,
                 response or "",
-                system_prompt, last_user,
                 prompt_tokens, completion_tokens, total_tokens, duration_ms,
             ),
         )
         conv_id = cur.lastrowid
+        msg_rows = []
+        for seq, m in enumerate(messages or []):
+            if not isinstance(m, dict):
+                continue
+            role = str(m.get("role", "unknown"))
+            content, is_list = _msg_content(m.get("content"))
+            extra = {k: v for k, v in m.items() if k not in ("role", "content")}
+            extra_str = json.dumps(extra, ensure_ascii=False) if extra else ""
+            content_id = _get_or_insert_message_content(conn, content, is_list, extra_str)
+            msg_rows.append((conv_id, seq, role, content_id))
+        if msg_rows:
+            conn.executemany(
+                "INSERT INTO messages (conversation_id, seq, role, content_id) VALUES (?, ?, ?, ?)",
+                msg_rows,
+            )
         conn.commit()
         conn.close()
         return conv_id
@@ -729,16 +918,8 @@ def api_conversations():
         f"SELECT * FROM conversations {where} ORDER BY request_time DESC LIMIT ? OFFSET ?",
         params + [page_size, offset],
     ).fetchall()
+    items = _conv_to_dict_batch(conn, rows)
     conn.close()
-
-    items = []
-    for r in rows:
-        d = dict(r)
-        try:
-            d["messages"] = json.loads(d.get("messages") or "[]")
-        except Exception:
-            d["messages"] = []
-        items.append(d)
 
     return jsonify({
         "total": total,
@@ -752,14 +933,11 @@ def api_conversations():
 def api_conversation_detail(conv_id):
     conn = get_conv_db()
     row = conn.execute("SELECT * FROM conversations WHERE id = ?", (conv_id,)).fetchone()
-    conn.close()
     if not row:
+        conn.close()
         return jsonify({"error": "not found"}), 404
-    d = dict(row)
-    try:
-        d["messages"] = json.loads(d.get("messages") or "[]")
-    except Exception:
-        d["messages"] = []
+    d = _conv_to_dict_batch(conn, [row])[0]
+    conn.close()
     return jsonify(d)
 
 
@@ -776,15 +954,8 @@ def _fetch_conversations(start=None, end=None):
     rows = conn.execute(
         f"SELECT * FROM conversations {where} ORDER BY request_time ASC", params
     ).fetchall()
+    items = _conv_to_dict_batch(conn, rows)
     conn.close()
-    items = []
-    for r in rows:
-        d = dict(r)
-        try:
-            d["messages"] = json.loads(d.get("messages") or "[]")
-        except Exception:
-            d["messages"] = []
-        items.append(d)
     return items
 
 
@@ -990,6 +1161,7 @@ INSIGHTS_CACHE = {}
 INSIGHTS_CACHE_TTL = 1800
 INSIGHTS_MAX_DAYS = 60
 INSIGHTS_MAX_MSGS = 30
+INSIGHTS_SCHEMA = 2
 
 
 def _clean_insight_message(text):
@@ -1069,12 +1241,13 @@ def _normalize_insight(data):
         acts = [str(a).strip() for a in (t.get("activities") or []) if str(a).strip()]
         if name:
             topics.append({"topic": name, "activities": acts[:20], "count": len(acts)})
-    if not topics and not summary:
+    suggestions = [str(s).strip() for s in (data.get("suggestions") or []) if str(s).strip()][:6]
+    if not topics and not summary and not suggestions:
         return None
-    return {"summary": summary, "topics": topics}
+    return {"summary": summary, "topics": topics, "suggestions": suggestions}
 
 
-def _llm_classify_insight(model_cfg, label, messages, total_tokens):
+def _llm_classify_insight(model_cfg, label, messages, total_tokens, total_duration_ms=0):
     api_base = model_cfg["api_base"].rstrip("/")
     headers = {"Content-Type": "application/json"}
     if model_cfg.get("api_key"):
@@ -1082,15 +1255,16 @@ def _llm_classify_insight(model_cfg, label, messages, total_tokens):
     sys_prompt = (
         "你是 AI 使用记录分析助手。根据用户在指定时间段内发给 AI 的消息，归纳出用户实际在做什么工作。\n"
         "输出必须 ONLY 是合法 JSON（不要任何其他文字），格式：\n"
-        '{"summary": "一句话总结该时段用户在做什么", "topics": [{"topic": "主题名", "activities": ["具体活动1", "具体活动2"]}]}\n'
+        '{"summary": "一句话总结该时段用户在做什么", "topics": [{"topic": "主题名", "activities": ["具体活动1", "具体活动2"]}], "suggestions": ["建议1", "建议2"]}\n'
         "要求：\n"
         "1. topic 只能从以下主题中选择：" + "、".join(INSIGHTS_TOPICS) + "。\n"
         "2. 忽略系统提示、指令类（如\"继续\"\"执行\"）以及纯工具操作消息，聚焦用户真实意图。\n"
         "3. activities 每条用简短动词短语概括一项实际工作，尽量具体。\n"
-        "4. 没有匹配的主题就不列出，summary 允许留空字符串。"
+        "4. 没有匹配的主题就不列出，summary 允许留空字符串。\n"
+        "5. suggestions 给出 2-4 条针对该时段工作情况的建议（如时间分配、改进方向），简短具体，没有则给空数组。"
     )
     msg_list = "\n".join(f"- {m}" for m in messages)
-    user_msg = f"时间段：{label}（{len(messages)} 条去重消息，总消耗约 {total_tokens} tokens）\n\n用户消息：\n{msg_list}"
+    user_msg = f"时间段：{label}（{len(messages)} 条去重消息，总消耗约 {total_tokens} tokens，总耗时约 {total_duration_ms / 60000:.0f} 分钟）\n\n用户消息：\n{msg_list}"
     body = {
         "model": model_cfg["model"],
         "messages": [
@@ -1135,7 +1309,7 @@ def api_insights():
         end = e_dt.strftime("%Y-%m-%d 23:59:59")
         truncated = True
 
-    cache_key = f"{granularity}|{start}|{end}|{model_name}"
+    cache_key = f"{INSIGHTS_SCHEMA}|{granularity}|{start}|{end}|{model_name}"
     if not refresh:
         hit = INSIGHTS_CACHE.get(cache_key)
         if hit and time.time() - hit["ts"] < INSIGHTS_CACHE_TTL:
@@ -1148,7 +1322,7 @@ def api_insights():
 
     conn = get_conv_db()
     rows = conn.execute(
-        "SELECT request_time, last_user_message, total_tokens FROM conversations WHERE request_time BETWEEN ? AND ? ORDER BY request_time ASC",
+        "SELECT request_time, last_user_message, total_tokens, duration_ms FROM conversations WHERE request_time BETWEEN ? AND ? ORDER BY request_time ASC",
         (start, end),
     ).fetchall()
     conn.close()
@@ -1156,18 +1330,21 @@ def api_insights():
     buckets = {}
     for r in rows:
         key = _insight_bucket_key(r["request_time"], granularity)
-        b = buckets.setdefault(key, {"messages": set(), "tokens": 0})
+        b = buckets.setdefault(key, {"messages": set(), "tokens": 0, "duration": 0})
         msg = _clean_insight_message(r["last_user_message"])
         if msg:
             b["messages"].add(msg)
         b["tokens"] += r["total_tokens"] or 0
+        b["duration"] += r["duration_ms"] or 0
 
     periods = []
     failed = []
     for label in sorted(buckets):
         b = buckets[label]
         msgs = sorted(b["messages"])[:INSIGHTS_MAX_MSGS]
-        result = _llm_classify_insight(model_cfg, label, msgs, b["tokens"])
+        if not msgs:
+            continue
+        result = _llm_classify_insight(model_cfg, label, msgs, b["tokens"], b["duration"])
         if result is None:
             failed.append(label)
             continue
@@ -1175,16 +1352,30 @@ def api_insights():
             "period": label,
             "summary": result["summary"],
             "topics": result["topics"],
+            "suggestions": result["suggestions"],
             "message_count": len(msgs),
             "total_tokens": b["tokens"],
+            "duration_ms": b["duration"],
         })
+
+    total_msgs = sum(p["message_count"] for p in periods)
+    total_tokens = sum(p["total_tokens"] for p in periods)
+    for p in periods:
+        p["message_share"] = round(p["message_count"] * 100.0 / total_msgs, 1) if total_msgs else 0
+        p["token_share"] = round(p["total_tokens"] * 100.0 / total_tokens, 1) if total_tokens else 0
 
     data = {
         "granularity": granularity,
         "periods": periods,
         "failed": failed,
         "truncated": truncated,
+        "has_conversations": len(rows) > 0,
         "analyzed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "totals": {
+            "messages": total_msgs,
+            "tokens": total_tokens,
+            "duration_ms": sum(p["duration_ms"] for p in periods),
+        },
     }
     INSIGHTS_CACHE[cache_key] = {"ts": time.time(), "data": data}
     return jsonify(data)

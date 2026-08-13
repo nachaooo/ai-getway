@@ -2,6 +2,110 @@
 
 ## [Unreleased]
 
+## [0.6.15] - 2026-08-13
+
+### Changed
+- **对话存储重构（拆表 + 内容哈希去重）**：旧结构 `conversations` 单表把整段消息 JSON 存在 `messages` 大字段里，重复内容（system prompt、tool 输出、缓存助手回复）每条会话存一份，导致库膨胀到 **7.5GB**。现拆为 4 张表，重复内容只存一份，正式迁移后压缩至 **约 450MB（-94%）**。
+- 升级后首次启动自动迁移旧库（无需手动操作），迁移前自动备份为 `conversations.db.bak`。
+- 现有 API 返回结构与旧版完全一致，外部调用方无感知。
+
+### 新数据库结构（`%APPDATA%/AI Gateway/conversations.db`）
+
+#### 1. `conversations` — 会话元数据（最外层表）
+一次 AI 对话一行，存与内容无关的统计和摘要字段：
+
+| 字段 | 含义 |
+|---|---|
+| `id` | 会话 ID（**保留旧值**，与 `usage_logs.conversation_id` 关联） |
+| `model` / `provider` / `endpoint` | 请求的模型 / 平台 / 端点 |
+| `request_time` | 请求时间 |
+| `system_prompt_id` | 外键 → `system_prompts.id`（该会话用的系统提示词） |
+| `last_user_message` | 最后一条用户消息（摘要） |
+| `response` | 最终回复文本（摘要） |
+| `prompt_tokens` / `completion_tokens` / `total_tokens` | Token 统计 |
+| `duration_ms` | 耗时（毫秒） |
+
+> **做用量/性能分析用这张表**：`SELECT model, SUM(total_tokens), AVG(duration_ms) ... GROUP BY model`。
+
+#### 2. `messages` — 消息序列（会话 → 内容 的桥）
+记录每条消息属于哪个会话、第几条、什么角色、内容存哪：
+
+| 字段 | 含义 |
+|---|---|
+| `id` | 消息 ID |
+| `conversation_id` | 外键 → `conversations.id` |
+| `seq` | 消息序号（0,1,2…），按此还原消息顺序 |
+| `role` | 消息角色：`system` / `user` / `assistant` / `tool` |
+| `content_id` | 外键 → `message_contents.id` |
+
+> 这张表本身**不存内容**，只存指向内容的指针。同一条去重内容可能被多张表的 `content_id` 引用。
+
+#### 3. `message_contents` — 去重消息内容（核心去重表）
+按 `(content_hash, extra_hash)` 唯一约束，相同内容只存一份：
+
+| 字段 | 含义 |
+|---|---|
+| `content_hash` | SHA-256 哈希（`s:` 开头=字符串，`l:` 开头=数组） |
+| `extra_hash` | 附加字段哈希（`tool_call_id`、`tool_calls`、`name` 等），无附加则为空串 |
+| `content` | 消息正文（字符串或 JSON 数组） |
+| `extra` | 附加字段 JSON（如工具调用信息） |
+| `is_list` | 1=content 是数组（OpenAI 多段 content），0=是字符串 |
+
+> **这张表是空间收益来源**：242 万条消息 → 仅 7.3 万份唯一内容（去重率 97%）。**不要直接对它做业务查询**（没有会话/时间维度），它只负责"存"。
+
+#### 4. `system_prompts` — 去重系统提示词
+| 字段 | 含义 |
+|---|---|
+| `id` | 主键 |
+| `content_hash` | SHA-256（唯一约束） |
+| `content` | 提示词全文 |
+
+> 同样的 system prompt 全局只存一份（本次 2.4 万会话 → 仅 234 份）。
+
+### 表关系
+```
+conversations (1) ──┬──< (N) messages ──> (1) message_contents
+                    └────> (1) system_prompts
+```
+- 1 个会话含 N 条消息（`conversations.id` = `messages.conversation_id`）
+- N 条消息可指向同一份去重内容（`messages.content_id` = `message_contents.id`）
+- 1 个会话引用 1 份系统提示词（`conversations.system_prompt_id` = `system_prompts.id`）
+
+### 如何查数据（SQL 示例）
+```sql
+-- 1. 按会话取完整消息（还原旧版 messages JSON 数组）：
+SELECT m.seq, m.role, mc.content, mc.extra, mc.is_list
+FROM messages m
+JOIN message_contents mc ON m.content_id = mc.id
+WHERE m.conversation_id = 12345
+ORDER BY m.seq;
+
+-- 2. 取某会话的系统提示词：
+SELECT sp.content
+FROM conversations c
+JOIN system_prompts sp ON c.system_prompt_id = sp.id
+WHERE c.id = 12345;
+
+-- 3. 按内容反查（哪些会话用过同一条 system prompt）：
+SELECT c.id, c.request_time
+FROM conversations c
+WHERE c.system_prompt_id = (SELECT id FROM system_prompts WHERE content_hash = 's:xxxx');
+
+-- 4. 删除某会话时清理不再被引用的去重内容：
+DELETE FROM messages WHERE conversation_id = 12345;
+DELETE FROM conversations WHERE id = 12345;
+-- 若某 content_id 无任何 messages 引用，再删 message_contents 对应行
+```
+
+### 分析该用哪些数据
+| 分析目标 | 用哪张表 | 说明 |
+|---|---|---|
+| 请求数 / Token / 耗时 / 模型 / 平台统计 | `usage_logs`（usage.db） | 按 `request_time` 聚合（`/api/usage` 用的就是它） |
+| 会话级 Token / 耗时 / 模型 | `conversations` | 一条会话一行，直接 SUM/AVG/GROUP BY |
+| 对话内容 / 主题分类 / 语义分析 | `conversations` + `messages` + `message_contents` | 先查会话元数据，再 JOIN 重建消息数组 |
+| 某模型/某平台用了哪些 system prompt | `conversations` + `system_prompts` | 按 `system_prompt_id` 关联 |
+| 内容去重收益 / 空间占用审计 | `message_contents` | 只看唯一内容有多少份 |
+
 ## [0.6.0] - 2026-05-24
 
 ### Added

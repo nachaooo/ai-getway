@@ -126,6 +126,18 @@ td:last-child, th:last-child { text-align: right; }
 .topic-name { color: var(--heading); font-size: 12px; font-weight: 500; }
 .insight-topic ul { margin: 2px 0 0 18px; padding: 0; }
 .insight-topic li { color: var(--dim); font-size: 12px; line-height: 1.5; }
+.insight-meta { color: var(--muted); font-size: 11px; }
+.insight-suggestions { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--table-border); }
+.insights-start { text-align: center; padding: 28px 16px; }
+.insights-start-hint { color: var(--empty); font-size: 12px; margin-bottom: 12px; }
+.insights-start-btn { background: var(--btn-active-bg); border: 1px solid var(--btn-active-border); color: var(--btn-active-fg); padding: 6px 18px; border-radius: 5px; cursor: pointer; font-size: 12px; }
+.insights-start-btn:hover { opacity: 0.9; }
+.insights-loading { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.spinner { width: 12px; height: 12px; border: 2px solid var(--btn-border); border-top-color: var(--btn-active-fg); border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.insight-suggestions b { color: var(--heading); font-size: 12px; }
+.insight-suggestions ul { margin: 2px 0 0 18px; padding: 0; }
+.insight-suggestions li { color: var(--dim); font-size: 12px; line-height: 1.5; }
 [data-layout="kanban"] #insightsList { flex: 1; overflow-y: auto; min-height: 0; }
 
 /* 模态框样式 */
@@ -228,8 +240,6 @@ td:last-child, th:last-child { text-align: right; }
         <div class="stat"><div class="n" id="totalRequests">-</div><div class="mom" id="totalRequestsMom"></div><div class="l" data-i18n="statRequests">对话次数</div></div>
         <div class="stat"><div class="n" id="promptTokens">-</div><div class="mom" id="promptTokensMom"></div><div class="l" data-i18n="statInput">输入 Token</div></div>
         <div class="stat"><div class="n" id="completionTokens">-</div><div class="mom" id="completionTokensMom"></div><div class="l" data-i18n="statOutput">输出 Token</div></div>
-        <div class="stat"><div class="n" id="cachedTokens">-</div><div class="mom" id="cachedTokensMom"></div><div class="l">缓存命中 Token</div></div>
-        <div class="stat"><div class="n" id="reasoningTokens">-</div><div class="mom" id="reasoningTokensMom"></div><div class="l">推理 Token</div></div>
         <div class="stats-empty"></div>
       </div>
 
@@ -259,6 +269,7 @@ td:last-child, th:last-child { text-align: right; }
           <button class="active" data-insight-granularity="day" data-i18n="insightsDay">按天</button>
           <button data-insight-granularity="week" data-i18n="insightsWeek">按周</button>
           <button onclick="loadInsights(true)" data-i18n="insightsRefresh">重新分析</button>
+          <button id="insightsShareBtn" onclick="shareInsights(this)" data-i18n="insightsShare">分享</button>
         </div>
         <div id="insightsList"></div>
       </div>
@@ -299,7 +310,10 @@ const I18N = {
     configStats: '统计数据', configTrend: '用量趋势', configModelsTrend: '模型趋势',
     configBilling: '平台使用量', configModelUsage: '模型使用量', configRecent: '最近请求', configInsights: '活动分析',
     insightsTitle: '活动分析', insightsDay: '按天', insightsWeek: '按周', insightsRefresh: '重新分析',
-    insightsLoading: '分析中…', insightsError: '分析失败，请重试',
+    insightsStart: '开始分析', insightsLoading: '分析中…', insightsError: '分析失败，请重试',
+    insightsEmptyHint: '点击按钮，AI 将归纳所选时段的工作内容', insightsNoConversations: '所选时段暂无对话记录',
+    insightsShare: '分享', insightsCopied: '已复制', insightsSuggestions: '建议',
+    insightsDuration: '时长', insightsMsgShare: '消息', insightsTokenShare: 'Token',
   },
   en: {
     pageTitle: 'AI Gateway',
@@ -313,7 +327,10 @@ const I18N = {
     configStats: 'Statistics', configTrend: 'Usage Trend', configModelsTrend: 'Models Trend',
     configBilling: 'Provider Usage', configModelUsage: 'Model Usage', configRecent: 'Recent Requests', configInsights: 'Activity Insights',
     insightsTitle: 'Activity Insights', insightsDay: 'Daily', insightsWeek: 'Weekly', insightsRefresh: 'Re-analyze',
-    insightsLoading: 'Analyzing…', insightsError: 'Analysis failed, please retry',
+    insightsStart: 'Analyze', insightsLoading: 'Analyzing…', insightsError: 'Analysis failed, please retry',
+    insightsEmptyHint: 'Click the button to let AI summarize activity in the selected period', insightsNoConversations: 'No conversations in the selected period',
+    insightsShare: 'Share', insightsCopied: 'Copied', insightsSuggestions: 'Suggestions',
+    insightsDuration: 'Duration', insightsMsgShare: 'Msgs', insightsTokenShare: 'Token',
   }
 };
 
@@ -852,8 +869,6 @@ function fetchAll() {
     document.getElementById('totalRequests').textContent = n(d.totals.request_count);
     document.getElementById('promptTokens').textContent = n(d.totals.prompt_tokens);
     document.getElementById('completionTokens').textContent = n(d.totals.completion_tokens);
-    document.getElementById('cachedTokens').textContent = n(d.totals.cached_tokens) + cachePct(d.totals.cached_tokens, d.totals.prompt_tokens);
-    document.getElementById('reasoningTokens').textContent = n(d.totals.reasoning_tokens);
     const statsEmpty = document.querySelector('.stats-empty');
     const statCards = document.querySelectorAll('.stats > .stat');
     const allZero = !d.totals.request_count && !d.totals.prompt_tokens && !d.totals.completion_tokens;
@@ -866,8 +881,6 @@ function fetchAll() {
     updateMom('totalRequestsMom', d.totals.request_count, pd.totals.request_count);
     updateMom('promptTokensMom', d.totals.prompt_tokens, pd.totals.prompt_tokens);
     updateMom('completionTokensMom', d.totals.completion_tokens, pd.totals.completion_tokens);
-    updateMom('cachedTokensMom', d.totals.cached_tokens, pd.totals.cached_tokens);
-    updateMom('reasoningTokensMom', d.totals.reasoning_tokens, pd.totals.reasoning_tokens);
 
     const bl = document.getElementById('billingList');
     const billing = d.billing || {};
@@ -932,9 +945,28 @@ function fetchRecent(p) {
 }
 
 let insightsGranularity = 'day';
+let lastInsights = null;
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function fmtDuration(ms) {
+  if (!ms) return '0m';
+  const totalMin = Math.round(ms / 60000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h > 0) return `${h}h${m ? m + 'm' : ''}`;
+  if (m > 0) return `${m}m`;
+  return `${Math.max(1, Math.round(ms / 1000))}s`;
+}
+
+function resetInsightsToStart() {
+  const lang = document.documentElement.getAttribute('data-lang') || 'zh';
+  const i18n = I18N[lang];
+  const list = document.getElementById('insightsList');
+  lastInsights = null;
+  list.innerHTML = `<div class="insights-start"><div class="insights-start-hint">${i18n.insightsEmptyHint}</div><button class="insights-start-btn" onclick="loadInsights(false)">${i18n.insightsStart}</button></div>`;
 }
 
 function loadInsights(force) {
@@ -943,7 +975,7 @@ function loadInsights(force) {
   const list = document.getElementById('insightsList');
   const params = { granularity: insightsGranularity, start: currentStart, end: currentEnd };
   if (force) params.refresh = '1';
-  list.innerHTML = '<div class="empty">' + I18N[lang].insightsLoading + '</div>';
+  list.innerHTML = '<div class="empty insights-loading"><span class="spinner"></span>' + I18N[lang].insightsLoading + '</div>';
   fetch('/api/insights?' + new URLSearchParams(params))
     .then(r => r.json())
     .then(d => renderInsights(d))
@@ -956,12 +988,21 @@ function renderInsights(d) {
   const lang = document.documentElement.getAttribute('data-lang') || 'zh';
   const i18n = I18N[lang];
   const list = document.getElementById('insightsList');
+  lastInsights = d;
   if (d.error) { list.innerHTML = `<div class="empty">${escapeHtml(d.error)}</div>`; return; }
-  if (!d.periods || d.periods.length === 0) { list.innerHTML = `<div class="empty">${i18n.empty}</div>`; return; }
+  if (!d.periods || d.periods.length === 0) {
+    if (!d.has_conversations) {
+      list.innerHTML = `<div class="empty">${i18n.insightsNoConversations}</div>`;
+    } else {
+      list.innerHTML = `<div class="insights-start"><div class="insights-start-hint">${i18n.insightsError}</div><button class="insights-start-btn" onclick="loadInsights(true)">${i18n.insightsRefresh}</button></div>`;
+    }
+    return;
+  }
   let html = '';
   for (const p of d.periods) {
     html += `<div class="insight-period">
-      <div class="insight-head"><b>${escapeHtml(p.period)}</b><span class="muted">${n(p.message_count)} msgs · ${n(p.total_tokens)} tokens</span></div>`;
+      <div class="insight-head"><b>${escapeHtml(p.period)}</b><span class="muted">${n(p.message_count)} msgs · ${n(p.total_tokens)} tokens</span></div>
+      <div class="insight-meta">${i18n.insightsDuration}: ${fmtDuration(p.duration_ms)} · ${i18n.insightsMsgShare} ${p.message_share}% · ${i18n.insightsTokenShare} ${p.token_share}%</div>`;
     if (p.summary) html += `<div class="insight-summary">${escapeHtml(p.summary)}</div>`;
     if (p.topics && p.topics.length) {
       html += '<div class="insight-topics">';
@@ -976,6 +1017,11 @@ function renderInsights(d) {
       }
       html += '</div>';
     }
+    if (p.suggestions && p.suggestions.length) {
+      html += `<div class="insight-suggestions"><b>${escapeHtml(i18n.insightsSuggestions)}</b><ul>`;
+      for (const s of p.suggestions) html += `<li>${escapeHtml(s)}</li>`;
+      html += '</ul></div>';
+    }
     html += '</div>';
   }
   if (d.failed && d.failed.length) {
@@ -984,12 +1030,58 @@ function renderInsights(d) {
   list.innerHTML = html;
 }
 
+function shareInsights(btn) {
+  if (!lastInsights || !lastInsights.periods || !lastInsights.periods.length) return;
+  const lang = document.documentElement.getAttribute('data-lang') || 'zh';
+  const i18n = I18N[lang];
+  const label = lastInsights.granularity === 'week' ? i18n.insightsWeek : i18n.insightsDay;
+  const lines = [`【${i18n.insightsTitle}】${label} · ${currentStart.slice(0, 10)} ~ ${currentEnd.slice(0, 10)}`, ''];
+  for (const p of lastInsights.periods) {
+    lines.push(`== ${p.period}（${n(p.message_count)} msgs · ${n(p.total_tokens)} tokens · ${fmtDuration(p.duration_ms)} · ${i18n.insightsMsgShare} ${p.message_share}% · ${i18n.insightsTokenShare} ${p.token_share}%）`);
+    if (p.summary) lines.push(p.summary);
+    if (p.topics && p.topics.length) {
+      lines.push(`${lang === 'zh' ? '主题' : 'Topics'}:`);
+      for (const t of p.topics) {
+        lines.push(`· ${t.topic}${t.activities && t.activities.length ? '：' + t.activities.join('；') : ''}`);
+      }
+    }
+    if (p.suggestions && p.suggestions.length) {
+      lines.push(`${i18n.insightsSuggestions}:`);
+      for (const s of p.suggestions) lines.push(`· ${s}`);
+    }
+    lines.push('');
+  }
+  const text = lines.join('\n');
+  const done = () => {
+    const old = btn.textContent;
+    btn.textContent = i18n.insightsCopied;
+    setTimeout(() => { btn.textContent = old; }, 1500);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+
+function fallbackCopy(text, done) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); } catch (e) {}
+  document.body.removeChild(ta);
+  done();
+}
+
 document.querySelectorAll('[data-insight-granularity]').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('[data-insight-granularity]').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     insightsGranularity = btn.dataset.insightGranularity;
-    loadInsights(false);
+    resetInsightsToStart();
   });
 });
 
@@ -1018,7 +1110,7 @@ document.querySelectorAll('[data-range]').forEach(btn => {
     page = 1;
     fetchAll();
     fetchRecent(1);
-    loadInsights(false);
+    resetInsightsToStart();
   });
 });
 
@@ -1033,7 +1125,7 @@ document.querySelectorAll('[data-range]').forEach(btn => {
       page = 1;
       fetchAll();
       fetchRecent(1);
-      loadInsights(false);
+      resetInsightsToStart();
     }
   });
 });
@@ -1042,7 +1134,7 @@ initPrefs();
 
 fetchAll();
 fetchRecent(1);
-loadInsights(false);
+resetInsightsToStart();
 
 setInterval(() => { fetchAll(); fetchRecent(page); }, 15000);
 

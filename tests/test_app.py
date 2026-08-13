@@ -11,6 +11,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # 设置测试用的临时数据库，避免污染真实数据
 _test_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 os.environ["DB_PATH"] = _test_db.name
+_test_conv_db = tempfile.NamedTemporaryFile(suffix="_conv.db", delete=False)
+os.environ["CONV_DB_PATH"] = _test_conv_db.name
 os.environ["PORT"] = "59999"
 
 import app
@@ -217,6 +219,34 @@ class TestProxyValidation(unittest.TestCase):
         self.assertIn("application/json", resp.content_type)
         data = json.loads(resp.data)
         self.assertIn("model is required", data["error"])
+
+
+class TestInsights(unittest.TestCase):
+    def test_normalize_insight_with_suggestions(self):
+        """解析 LLM 输出，正确提取 summary/topics/suggestions"""
+        data = {
+            "summary": "修复前端构建问题",
+            "topics": [{"topic": "前端/UI", "activities": ["修复样式", "调整布局"]}],
+            "suggestions": ["拆分任务", "增加测试"],
+        }
+        r = app._normalize_insight(data)
+        self.assertEqual(r["summary"], "修复前端构建问题")
+        self.assertEqual(r["topics"][0]["topic"], "前端/UI")
+        self.assertEqual(r["suggestions"], ["拆分任务", "增加测试"])
+
+    def test_normalize_insight_empty(self):
+        """空输入返回 None"""
+        self.assertIsNone(app._normalize_insight(None))
+        self.assertIsNone(app._normalize_insight({}))
+
+    def test_insight_bucket_key_day(self):
+        """按天分桶"""
+        self.assertEqual(app._insight_bucket_key("2026-08-04 10:30:00", "day"), "2026-08-04")
+
+    def test_insight_bucket_key_week(self):
+        """按周分桶（ISO 周）"""
+        key = app._insight_bucket_key("2026-08-04 10:30:00", "week")
+        self.assertRegex(key, r"^2026-W\d{2}$")
 
 
 if __name__ == "__main__":
