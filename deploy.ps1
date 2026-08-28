@@ -1,5 +1,6 @@
-# AI Gateway 部署脚本
+﻿# AI Gateway 部署脚本
 # 读取 config.conf 配置
+# 依赖：本地 Windows 自带 tar + ssh（无需安装 rsync）
 
 $config = @{}
 Get-Content "config.conf" | ForEach-Object {
@@ -22,6 +23,8 @@ $WEB_PORT = $config["WEB_PORT"]
 $APP_NAME = $config["APP_NAME"]
 $VERSION = $config["VERSION"]
 
+$SSH_ARGS = "-i $SSH_KEY -p $SSH_PORT -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10"
+
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "AI Gateway 部署脚本" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
@@ -33,7 +36,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 
 # 检查 SSH 连接
 Write-Host "`n[1/5] 检查 SSH 连接..." -ForegroundColor Green
-$sshTest = ssh -i $SSH_KEY -p $SSH_PORT -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$DEPLOY_HOST" "echo 'SSH OK'" 2>&1
+$sshTest = ssh $SSH_ARGS "$DEPLOY_HOST" "echo 'SSH OK'" 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "SSH 连接失败: $sshTest" -ForegroundColor Red
     exit 1
@@ -42,17 +45,15 @@ Write-Host "SSH 连接成功" -ForegroundColor Green
 
 # 创建远程目录
 Write-Host "`n[2/5] 创建远程目录..." -ForegroundColor Green
-ssh -i $SSH_KEY -p $SSH_PORT "$DEPLOY_HOST" "mkdir -p $DEPLOY_PATH"
+ssh $SSH_ARGS "$DEPLOY_HOST" "mkdir -p $DEPLOY_PATH"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "创建目录失败" -ForegroundColor Red
     exit 1
 }
 
-# 同步文件到远程服务器
+# 同步文件到远程服务器（tar 流式传输）
 Write-Host "`n[3/5] 同步文件到远程服务器..." -ForegroundColor Green
-$rsyncArgs = @(
-    "-avz",
-    "-e", "ssh -i $SSH_KEY -p $SSH_PORT",
+$excludes = @(
     "--exclude", ".git",
     "--exclude", "__pycache__",
     "--exclude", "*.pyc",
@@ -60,16 +61,20 @@ $rsyncArgs = @(
     "--exclude", "build",
     "--exclude", "*.spec",
     "--exclude", ".pytest_cache",
-    "--exclude", "usage.db*",
+    "--exclude", "*.db*",
     "--exclude", "*.log",
-    "./",
-    "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
+    "--exclude", "deploy.ps1.bak",
+    "--exclude", "*.vbs"
 )
-& rsync @rsyncArgs
+$tarCmd = "tar -czf - $($excludes -join ' ') -C . ."
+$remoteUnpack = "mkdir -p $DEPLOY_PATH && tar -xzf - -C $DEPLOY_PATH"
+$pipeline = "$tarCmd | ssh $SSH_ARGS $DEPLOY_USER@$DEPLOY_HOST `"$remoteUnpack`""
+& cmd /c $pipeline
 if ($LASTEXITCODE -ne 0) {
     Write-Host "文件同步失败" -ForegroundColor Red
     exit 1
 }
+Write-Host "文件同步完成" -ForegroundColor Green
 
 # 在远程服务器上安装依赖和配置
 Write-Host "`n[4/5] 配置远程环境..." -ForegroundColor Green
@@ -93,6 +98,7 @@ ExecStart=/usr/bin/python3 app.py
 Restart=always
 RestartSec=5
 Environment=PORT=$WEB_PORT
+Environment=DB_PATH=$DEPLOY_PATH/data/usage.db
 
 [Install]
 WantedBy=multi-user.target
@@ -108,7 +114,7 @@ sleep 2
 systemctl status ${APP_NAME} --no-pager
 "@
 
-ssh -i $SSH_KEY -p $SSH_PORT "$DEPLOY_HOST" $remoteScript
+ssh $SSH_ARGS "$DEPLOY_HOST" $remoteScript
 if ($LASTEXITCODE -ne 0) {
     Write-Host "远程配置失败" -ForegroundColor Red
     exit 1

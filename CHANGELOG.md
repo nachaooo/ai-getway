@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+## [0.6.24] - 2026-08-28
+
+### Changed
+- **对话存储合并到单库**：`conversations`、`system_prompts`、`message_contents`、`messages` 四张表从独立 `conversations.db` 合并进 `usage.db`（`CONV_DB_PATH` 指向 `DB_PATH`），全量数据（用量 + 对话）统一存 `%APPDATA%/AI Gateway/usage.db` 单文件，方便备份、同步、导入导出。
+- 升级后首次启动自动合并旧库：检测到旧版独立 `conversations.db` 存在且新库无对话数据时，通过 `ATTACH` 把四张表整体搬入 `usage.db`（保留原 id、内容哈希去重结构），合并后 VACUUM 压缩。**旧 `conversations.db` 保留不删除**，可确认无误后手动删除以释放空间。
+- `/api/db/upload` 导入时补齐 `ensure_conv_schema`，保证导入的单文件库包含完整对话表结构（兼容旧版导出的 usage.db）。
+- 涉及文件：`app.py`（路径定义、`_merge_legacy_conv_db`、`init_db`、`api_db_upload`）、`tests/test_app.py`（新增合并迁移 + 幂等 2 个用例）。
+
+## [0.6.22] - 2026-08-28
+
+### Fixed
+- **导入 usage.db 报「导入失败」**：`/api/db/upload` 原来用「删除现有库 + `shutil.move` 移入新文件」的方式替换数据库。服务运行中 SQLite 文件被写锁占用（网关实时记录用量），Windows 上删除文件直接抛 `WinError 32`，而重试仅 5×0.3s=1.5s，一次长请求就会耗尽重试导致 500。且替换后残留的旧 `-wal`/`-shm` 会被 SQLite 误套用到新库上，存在数据错乱隐患。
+- 修复方式：改用 SQLite 官方 backup API 原地还原——先把上传文件校验（`integrity_check` + schema 补齐），再通过 `src.backup(dst)` 将内容整体覆盖进现有库，全程不删除/移动主文件，天然避开文件占用竞态；目标连接设 `timeout=15s` 容忍瞬时写锁，完成后 `wal_checkpoint(TRUNCATE)` 落盘。非法文件（非 SQLite）返回 400 并提示具体原因。
+- 涉及文件：`app.py`（`api_db_upload`）、`tests/test_app.py`（新增 2 个导入用例：覆盖还原 + 非法文件拒绝）。
+
+## [0.6.20] - 2026-08-14
+
+### Added
+- **托盘菜单显示版本号**：`main.py`（exe 托盘入口）和 `scripts/tray.py`（开发模式托盘启动器）的右键菜单顶部新增只读项 `AI Gateway vX.Y.Z`，方便确认当前运行版本。版本号通过正则从 `app.py` 的 `VERSION` 常量读取（避免 `import app` 触发 Flask/DB 初始化）。
+
+## [0.6.18] - 2026-08-14
+
+### Added
+- **支持 OpenAI Responses API 直通与记账**：`@ai-sdk/openai`（opencode 的 DeepSeek V4-Flash 适配）会调用 `/responses` 端点而非 `/chat/completions`，请求体结构不同（无 `messages`，改 `input` 数组；usage 字段为 `input_tokens`/`output_tokens`）。本次为 `_proxy_passthrough` 增加 Responses 识别与记账适配：
+  - `_extract_content` 支持从 Responses 的 `output` 数组提取 `output_text`/`text`/`reasoning_text`。
+  - `_extract_input_messages` 从 `input` 数组提取消息用于对话记录。
+  - `_extract_cached_tokens` 补充 `input_tokens_details.cached_tokens`。
+  - `_handle_stream` 识别 `response.output_text.delta` 累积内容，`response.completed`/`response.incomplete` 事件提取 `response.usage`；`prompt_tokens`/`completion_tokens` 兼容 `input_tokens`/`output_tokens`。
+  - `_proxy_passthrough` 非流式分支同步兼容 Responses 的 usage 字段映射。
+- 数据库结构无变更；usage 记录中 `reasoning_tokens` 仍从 `output_tokens_details.reasoning_tokens` 提取。
+
+## [0.6.16] - 2026-08-13
+
+### Fixed
+- **活动分析报"未配置分类模型"**：exe 运行时代码从 exe 同目录的 `dist/config.json` 读取配置，但构建流程从不把项目根 `config.json` 同步到 `dist`，导致 `insights` 块（分类模型）缺失；且 `models` 表为空、前端又不传 `model` 参数，三个来源全部落空后返回 400 报错。
+- 修复方式：`build.vbs` 在构建成功后自动将项目根 `config.json` 复制到 `dist\config.json`，保证 exe 每次拿到最新配置（含 `insights` 分类模型）；当前 `dist\config.json` 已同步含 `insights` 块的版本。
+
 ## [0.6.15] - 2026-08-13
 
 ### Changed

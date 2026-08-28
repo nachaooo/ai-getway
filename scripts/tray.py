@@ -1,4 +1,4 @@
-import subprocess, os, sys, threading, webbrowser, time, signal, socket, json, winreg
+import subprocess, os, sys, threading, webbrowser, time, signal, socket, json, winreg, re
 import pystray
 from PIL import Image, ImageDraw
 
@@ -16,6 +16,16 @@ _PYTHONW = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
 if not os.path.exists(_PYTHONW):
     _PYTHONW = sys.executable
 _TRAY_PY = os.path.join(BASE, "scripts", "tray.py")
+
+def _get_version():
+    try:
+        with open(os.path.join(BASE, "app.py"), encoding="utf-8", errors="replace") as f:
+            m = re.search(r'VERSION = "([^"]+)"', f.read())
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    return "?"
 
 def _load_config():
     cfg_path = os.path.join(BASE, "config.json")
@@ -171,6 +181,7 @@ def main():
     icon = _TrayIcon(
         "ai_gateway", create_icon(), "AI Gateway",
         menu=pystray.Menu(
+            pystray.MenuItem(f"AI Gateway v{_get_version()}", None, enabled=False),
             pystray.MenuItem("打开看板", open_dashboard),
             pystray.MenuItem("重启服务", restart_gateway),
             pystray.MenuItem("开机自启动", toggle_autostart, checked=is_autostart_checked),

@@ -1,4 +1,4 @@
-import sys, os, subprocess, webbrowser, time, socket, json, winreg, datetime
+import sys, os, re, subprocess, webbrowser, time, socket, json, winreg, datetime
 
 _EXE_DIR = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
 _RES_DIR = sys._MEIPASS if getattr(sys, 'frozen', False) else _EXE_DIR
@@ -30,6 +30,17 @@ OLD_REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 OLD_REG_NAME = "AI-Gateway-AutoStart"
 
 app_proc = None
+
+def _get_version():
+    for p in (os.path.join(_RES_DIR, "app.py"), os.path.join(_EXE_DIR, "app.py")):
+        try:
+            with open(p, encoding="utf-8", errors="replace") as f:
+                m = re.search(r'VERSION = "([^"]+)"', f.read())
+            if m:
+                return m.group(1)
+        except Exception:
+            pass
+    return "?"
 
 def _load_config():
     cfg_path = os.path.join(_EXE_DIR, "config.json")
@@ -181,6 +192,7 @@ def main():
     icon = _TrayIcon(
         "ai_gateway", create_icon(), "AI Gateway",
         menu=pystray.Menu(
+            pystray.MenuItem(f"AI Gateway v{_get_version()}", None, enabled=False),
             pystray.MenuItem("打开看板", open_dashboard),
             pystray.MenuItem("重启服务", restart_gateway),
             pystray.MenuItem("开机自启动", toggle_autostart, checked=is_autostart_checked),

@@ -48,6 +48,13 @@ If Not fs.FolderExists(distPath) Then
     WScript.Quit 1
 End If
 
+' Sync config.json into dist so exe reads the latest settings (incl. insights block)
+srcCfg = scriptDir & "\config.json"
+dstCfg = distPath & "\config.json"
+If fs.FileExists(srcCfg) Then
+    fs.CopyFile srcCfg, dstCfg, True
+End If
+
 ' Find latest AI Gateway exe in dist folder
 latestExe = ""
 latestTime = #1900-01-01#

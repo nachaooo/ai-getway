@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_file
 
-VERSION = "0.6.15"
+VERSION = "0.6.24"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -56,9 +56,11 @@ _db_path = os.path.expandvars(_cfg("db_path", "DB_PATH", os.path.join(DATA_DIR, 
 # 兼容 config.json 中可能存在的相对路径：基于 EXE_DIR 解析为绝对路径
 DB_PATH = os.path.join(EXE_DIR, _db_path) if not os.path.isabs(_db_path) else _db_path
 
-# 对话内容单独存储，与 usage.db 隔离，便于单独删除/导出
-_conv_db_path = os.path.expandvars(_cfg("conv_db_path", "CONV_DB_PATH", os.path.join(DATA_DIR, "conversations.db")))
-CONV_DB_PATH = os.path.join(EXE_DIR, _conv_db_path) if not os.path.isabs(_conv_db_path) else _conv_db_path
+# 单一数据库文件：对话内容与用量统一存储，方便备份/同步
+# 旧版本（≤0.6.24）的 conversations.db 独立文件，在 init_db 中自动合并迁移
+CONV_DB_PATH = DB_PATH
+_legacy_conv_path = os.path.expandvars(_cfg("conv_db_path", "CONV_DB_PATH", os.path.join(DATA_DIR, "conversations.db")))
+LEGACY_CONV_DB_PATH = os.path.join(EXE_DIR, _legacy_conv_path) if not os.path.isabs(_legacy_conv_path) else _legacy_conv_path
 
 # ── database ──────────────────────────────────────────────────
 
@@ -163,6 +165,58 @@ def ensure_conv_schema(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, seq)")
     conn.commit()
 
+def _merge_legacy_conv_db():
+    """将旧版独立 conversations.db 合并进单库（不删除旧库，幂等）。"""
+    if not os.path.exists(LEGACY_CONV_DB_PATH):
+        return
+    if os.path.abspath(LEGACY_CONV_DB_PATH) == os.path.abspath(DB_PATH):
+        return
+    try:
+        legacy = sqlite3.connect(LEGACY_CONV_DB_PATH, timeout=30)
+        legacy.row_factory = sqlite3.Row
+        legacy_cols = [r[1] for r in legacy.execute("PRAGMA table_info(conversations)")]
+        if "messages" in legacy_cols:
+            print("旧 conversations.db 仍是未迁移的旧结构（含 messages 大字段），跳过自动合并。")
+            print("请先运行 python scripts/migrate_conv_db.py 迁移后再启动。")
+            legacy.close()
+            return
+        n = legacy.execute("SELECT COUNT(*) as n FROM conversations").fetchone()["n"]
+        legacy.close()
+        if n == 0:
+            return
+
+        dst = sqlite3.connect(DB_PATH, timeout=30)
+        try:
+            dst.execute("PRAGMA journal_mode=WAL")
+            ensure_conv_schema(dst)
+            has = dst.execute("SELECT COUNT(*) as n FROM conversations").fetchone()[0]
+            if has > 0:
+                print("conversations 表已有数据，跳过合并")
+                return
+            dst.execute("ATTACH DATABASE ? AS legacy", (LEGACY_CONV_DB_PATH,))
+            dst.execute("INSERT INTO conversations SELECT * FROM legacy.conversations")
+            dst.execute("INSERT INTO system_prompts SELECT * FROM legacy.system_prompts")
+            dst.execute("INSERT INTO message_contents SELECT * FROM legacy.message_contents")
+            dst.execute("INSERT INTO messages SELECT * FROM legacy.messages")
+            dst.execute("CREATE INDEX IF NOT EXISTS idx_conv_time ON conversations(request_time)")
+            dst.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, seq)")
+            dst.commit()
+            print(f"已合并旧 conversations.db（{n} 条会话）到单库 {DB_PATH}，旧库保留未删除")
+            try:
+                dst.execute("VACUUM")
+                dst.commit()
+                print("合并后 VACUUM 完成")
+            except Exception as e:
+                print(f"合并后 VACUUM 失败（将在下次启动重试）: {e}")
+        finally:
+            try:
+                dst.execute("DETACH DATABASE legacy")
+            except Exception:
+                pass
+            dst.close()
+    except Exception as e:
+        print(f"合并旧 conversations.db 失败: {e}")
+
 def init_db():
     conn = get_db()
     ensure_schema(conn)
@@ -170,6 +224,8 @@ def init_db():
     conn = get_conv_db()
     ensure_conv_schema(conn)
     conn.close()
+    # 旧版本（≤0.6.24）conversations 独立文件：启动时自动合并进单库
+    _merge_legacy_conv_db()
     # 迁移脚本在服务运行中无法 VACUUM（需独占锁），留下标记；启动时独占连接压缩
     marker = CONV_DB_PATH + ".needs_vacuum"
     if os.path.exists(marker):
@@ -405,6 +461,13 @@ def _extract_content(data: dict) -> str:
             if isinstance(parts, list):
                 return " ".join(p.get("text", "") for p in parts if p.get("type") == "text")
             return str(parts)
+        if isinstance(data.get("output"), list):
+            texts = []
+            for item in data["output"]:
+                for part in item.get("content") or []:
+                    if isinstance(part, dict) and part.get("type") in ("output_text", "text", "reasoning_text"):
+                        texts.append(part.get("text", ""))
+            return " ".join(t for t in texts if t)
     except Exception:
         pass
     return ""
@@ -420,13 +483,14 @@ def _msg_text(content) -> str:
 def _extract_cached_tokens(usage):
     """从 usage 中提取缓存命中 token 数，兼容多种上游返回格式。
     - OpenAI / DeepSeek 兼容: usage.prompt_tokens_details.cached_tokens
+    - Responses API: usage.input_tokens_details.cached_tokens
     - Anthropic 原生: usage.cache_read_input_tokens
     - fangna 中转扩展: usage.prompt_cache_hit_tokens
     """
     if not isinstance(usage, dict):
         return 0
     candidates = []
-    details = usage.get("prompt_tokens_details") or {}
+    details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
     if details.get("cached_tokens"):
         candidates.append(int(details["cached_tokens"]))
     if usage.get("cache_read_input_tokens"):
@@ -506,7 +570,23 @@ def _log_conversation(model, provider, endpoint, messages, response, prompt_toke
         print(f"  CONV LOG FAIL: {e}")
         return None
 
-def _handle_stream(target_url, headers, body_data, model, provider_label, prompt_tokens, raw_body=None, messages=None):
+def _extract_input_messages(input_data):
+    """从 Responses API 请求体的 input 中提取 messages 结构（用于记账/对话记录）。"""
+    messages = []
+    if isinstance(input_data, str):
+        if input_data.strip():
+            messages.append({"role": "user", "content": input_data})
+        return messages
+    if isinstance(input_data, list):
+        for item in input_data:
+            if isinstance(item, dict) and item.get("type") == "message":
+                role = item.get("role", "user")
+                content = item.get("content")
+                messages.append({"role": role, "content": content})
+    return messages
+
+
+def _handle_stream(target_url, headers, body_data, model, provider_label, prompt_tokens, raw_body=None, messages=None, is_responses=False):
     try:
         if raw_body:
             resp = requests.post(target_url, headers=headers, data=raw_body, stream=True, timeout=300, proxies=PROXIES)
@@ -551,7 +631,15 @@ def _handle_stream(target_url, headers, body_data, model, provider_label, prompt
                         continue
                     try:
                         chunk = json.loads(payload)
-                        if provider_label == "anthropic":
+                        if is_responses:
+                            ctype = chunk.get("type")
+                            if ctype == "response.output_text.delta":
+                                complete_content += chunk.get("delta") or ""
+                            elif ctype in ("response.completed", "response.incomplete"):
+                                resp_obj = chunk.get("response") or {}
+                                if resp_obj.get("usage"):
+                                    usage_data = resp_obj["usage"]
+                        elif provider_label == "anthropic":
                             if chunk.get("type") == "content_block_delta":
                                 complete_content += chunk.get("delta", {}).get("text") or ""
                             elif chunk.get("type") == "message_delta":
@@ -576,7 +664,7 @@ def _handle_stream(target_url, headers, body_data, model, provider_label, prompt
 
     def do_log():
         if usage_data:
-            pt = usage_data.get("prompt_tokens", 0) or prompt_tokens
+            pt = usage_data.get("prompt_tokens", 0) or usage_data.get("input_tokens", 0) or prompt_tokens
             ct = usage_data.get("completion_tokens", 0) or usage_data.get("output_tokens", 0)
             if not ct:
                 ct = count_tokens(model, complete_content)
@@ -624,12 +712,16 @@ def _proxy_passthrough(upstream_url, body, model, stream):
     hostname = upstream_url.replace("https://", "").replace("http://", "").split("/")[0]
     provider_label = hostname.split(":")[0]
 
-    messages = body.get("messages", [])
+    is_responses = "messages" not in body and "input" in body
+    if is_responses:
+        messages = _extract_input_messages(body.get("input"))
+    else:
+        messages = body.get("messages", [])
     prompt_tokens = count_messages_tokens(model, messages)
     raw_body = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
     if stream:
-        return _handle_stream(upstream_url, headers, body, model, provider_label, prompt_tokens, raw_body, messages)
+        return _handle_stream(upstream_url, headers, body, model, provider_label, prompt_tokens, raw_body, messages, is_responses=is_responses)
 
     print(f"  POST {upstream_url} | model={model} | stream={stream} | body={raw_body[:200].decode('utf-8', errors='replace')}")
     start_time = datetime.now()
@@ -650,8 +742,10 @@ def _proxy_passthrough(upstream_url, body, model, stream):
     usage = data.get("usage", {})
     if usage.get("prompt_tokens"):
         prompt_tokens = usage["prompt_tokens"]
+    elif usage.get("input_tokens"):
+        prompt_tokens = usage["input_tokens"]
     content = _extract_content(data)
-    completion_tokens = usage.get("completion_tokens", 0) or count_tokens(model, content)
+    completion_tokens = usage.get("completion_tokens", 0) or usage.get("output_tokens", 0) or count_tokens(model, content)
     cached_tokens = _extract_cached_tokens(usage)
     reasoning_tokens = _extract_reasoning_tokens(usage)
     if usage:
@@ -1111,40 +1205,42 @@ def api_db_upload():
         f.save(tmp_path)
         tmp.close()
 
-        conn = sqlite3.connect(tmp_path)
-        conn.execute("PRAGMA journal_mode=WAL")
-        ensure_schema(conn)
-        conn.close()
+        src = sqlite3.connect(tmp_path)
+        try:
+            src.execute("PRAGMA journal_mode=WAL")
+            ensure_schema(src)
+            ensure_conv_schema(src)
+            integrity = src.execute("PRAGMA integrity_check").fetchone()[0]
+            if integrity != "ok":
+                return jsonify({"error": f"导入失败：文件完整性校验未通过（{integrity}）"}), 400
+            src.commit()
+        except sqlite3.DatabaseError:
+            return jsonify({"error": "导入失败：文件不是有效的 SQLite 数据库"}), 400
+        finally:
+            src.close()
 
         if os.path.exists(target_path):
-            for i in range(5):
-                try:
-                    _src = sqlite3.connect(target_path)
-                    try:
-                        _dst = sqlite3.connect(target_path + ".bak")
-                        try:
-                            _src.backup(_dst)
-                        finally:
-                            _dst.close()
-                    finally:
-                        _src.close()
-                    break
-                except PermissionError:
-                    if i == 4:
-                        raise
-                    time.sleep(0.3)
-
-        for i in range(5):
+            _src = sqlite3.connect(target_path, timeout=15)
             try:
-                if os.path.exists(target_path):
-                    os.remove(target_path)
-                shutil.move(tmp_path, target_path)
-                tmp_path = None
-                break
-            except PermissionError:
-                if i == 4:
-                    raise
-                time.sleep(0.3)
+                _dst = sqlite3.connect(target_path + ".bak")
+                try:
+                    _src.backup(_dst)
+                finally:
+                    _dst.close()
+            finally:
+                _src.close()
+
+        dst = sqlite3.connect(target_path, timeout=15)
+        try:
+            _src = sqlite3.connect(tmp_path)
+            try:
+                _src.backup(dst)
+            finally:
+                _src.close()
+            dst.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            dst.commit()
+        finally:
+            dst.close()
     except Exception as e:
         return jsonify({"error": f"导入失败：{e}"}), 500
     finally:
