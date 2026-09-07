@@ -51,6 +51,39 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# 部署前备份服务器数据库到本地（绝不删除服务器 db）
+# 带宽有限（~0.5MB/s）且单文件大 scp 会卡死，采用：gzip 压缩 → 远程 split 成 30M 小块 → 逐块 scp → 本地合并
+Write-Host "`n[0/5] 备份服务器数据库到本地（gzip + 分块传输）..." -ForegroundColor Green
+$backupDir = Join-Path (Split-Path -Parent $PSCommandPath) "backups"
+if (-not (Test-Path $backupDir)) { New-Item -ItemType Directory -Path $backupDir | Out-Null }
+$ts = Get-Date -Format "yyyyMMdd_HHmmss"
+$localDb = Join-Path $backupDir "usage_${DEPLOY_HOST}_${ts}.db.gz"
+$localParts = Join-Path $backupDir "parts_${DEPLOY_HOST}_${ts}"
+try {
+    # 1. 远程 gzip + split
+    ssh $SSH_ARGS $DEPLOY_USER@$DEPLOY_HOST "rm -rf /tmp/usage.parts; mkdir -p /tmp/usage.parts; gzip -c /opt/ai-getway/data/usage.db | split -b 30M - /tmp/usage.parts/part-"
+    # 2. 本地建目录，逐块 scp（小块避免大流量卡死）
+    if (Test-Path $localParts) { Remove-Item $localParts -Recurse -Force }
+    New-Item -ItemType Directory -Path $localParts | Out-Null
+    $partList = ssh $SSH_ARGS $DEPLOY_USER@$DEPLOY_HOST "ls /tmp/usage.parts/"
+    $i = 0
+    foreach ($p in $partList) {
+        $i++
+        scp $SSH_ARGS "$DEPLOY_USER@$DEPLOY_HOST:/tmp/usage.parts/$p" (Join-Path $localParts $p)
+    }
+    ssh $SSH_ARGS $DEPLOY_USER@$DEPLOY_HOST "rm -rf /tmp/usage.parts"
+    # 3. 本地合并（cmd type）+ 清理临时目录
+    $files = Get-ChildItem $localParts -Filter "part-*" | Sort-Object Name
+    $cmd = "type " + ($files.FullName -join " ")
+    cmd /c "$cmd > `"$localDb`""
+    Remove-Item $localParts -Recurse -Force
+    "本地备份完成: $localDb (" + (Get-Item $localDb).Length + " bytes, gzip 压缩 + 分块传输)"
+} catch {
+    Write-Host "备份失败（不影响部署）: " + $_.Exception.Message -ForegroundColor Yellow
+    ssh $SSH_ARGS $DEPLOY_USER@$DEPLOY_HOST "rm -rf /tmp/usage.parts /tmp/usage.db.gz" 2>$null
+    Remove-Item $localParts -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 # 同步文件到远程服务器（tar 流式传输）
 Write-Host "`n[3/5] 同步文件到远程服务器..." -ForegroundColor Green
 $excludes = @(
