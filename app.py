@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_file
 
-VERSION = "0.6.24"
+VERSION = "0.6.26"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -57,7 +57,7 @@ _db_path = os.path.expandvars(_cfg("db_path", "DB_PATH", os.path.join(DATA_DIR, 
 DB_PATH = os.path.join(EXE_DIR, _db_path) if not os.path.isabs(_db_path) else _db_path
 
 # 单一数据库文件：对话内容与用量统一存储，方便备份/同步
-# 旧版本（≤0.6.24）的 conversations.db 独立文件，在 init_db 中自动合并迁移
+# 旧版本（≤0.6.26）的 conversations.db 独立文件，在 init_db 中自动合并迁移
 CONV_DB_PATH = DB_PATH
 _legacy_conv_path = os.path.expandvars(_cfg("conv_db_path", "CONV_DB_PATH", os.path.join(DATA_DIR, "conversations.db")))
 LEGACY_CONV_DB_PATH = os.path.join(EXE_DIR, _legacy_conv_path) if not os.path.isabs(_legacy_conv_path) else _legacy_conv_path
@@ -224,7 +224,7 @@ def init_db():
     conn = get_conv_db()
     ensure_conv_schema(conn)
     conn.close()
-    # 旧版本（≤0.6.24）conversations 独立文件：启动时自动合并进单库
+    # 旧版本（≤0.6.26）conversations 独立文件：启动时自动合并进单库
     _merge_legacy_conv_db()
     # 迁移脚本在服务运行中无法 VACUUM（需独占锁），留下标记；启动时独占连接压缩
     marker = CONV_DB_PATH + ".needs_vacuum"
@@ -699,12 +699,40 @@ def _clean_messages(body_dict: dict) -> dict:
     return body_dict
 
 
-def _proxy_passthrough(upstream_url, body, model, stream):
+# 通用 HTTP 库/SDK 的 User-Agent 前缀：OpenCode Go 等上游要求 coding-agent 自有身份，需替换
+_GENERIC_UA_PREFIXES = (
+    "python-requests", "python-httpx", "curl", "wget", "go-http-client",
+    "node", "undici", "axios", "okhttp", "java/", "apache-httpclient", "ai-sdk",
+)
+
+
+def _upstream_headers(body, model):
+    """构造上游请求头：透传 Authorization / User-Agent / x-opencode-session，
+    并补齐 OpenCode Go 端点（opencode.ai/zen/go/v1）的强制要求：
+    - x-opencode-session 会话头（缺失时上游返回 400 MissingSessionID），
+      客户端未携带时从会话首条消息派生稳定 ID（同一会话内不变，利于上游路由与提示缓存）
+    - coding-agent 风格 User-Agent（通用库 UA 替换为网关自身标识）
+    """
     headers = {"Content-Type": "application/json"}
-    for h in ("Authorization", "User-Agent"):
+    for h in ("Authorization", "User-Agent", "x-opencode-session"):
         v = request.headers.get(h)
         if v:
             headers[h] = v
+    ua = headers.get("User-Agent", "")
+    if not ua or ua.lower().startswith(_GENERIC_UA_PREFIXES):
+        headers["User-Agent"] = f"ai-gateway/{VERSION}"
+    if not headers.get("x-opencode-session"):
+        seed = model or ""
+        msgs = body.get("messages") or []
+        seed_source = msgs[0] if msgs else body.get("input")
+        if seed_source is not None:
+            seed += "|" + json.dumps(seed_source, ensure_ascii=False, sort_keys=True)
+        headers["x-opencode-session"] = "gw-" + hashlib.sha1(seed.encode("utf-8")).hexdigest()[:16]
+    return headers
+
+
+def _proxy_passthrough(upstream_url, body, model, stream):
+    headers = _upstream_headers(body, model)
 
     print(f"  INCOMING HEADERS: {dict(request.headers)}")
     body = _clean_messages(body)
@@ -818,6 +846,29 @@ def proxy_v1():
         request.headers = {**request.headers, "Authorization": f"Bearer {api_key}"}
     
     return _proxy_passthrough(api_base, body, model, stream)
+
+
+@app.route("/v1/models", methods=["GET"])
+def proxy_models():
+    """GET /v1/models?by=<base_url> — 透传上游模型列表（如 opencode.ai/zen/go/v1/models）"""
+    upstream_url = request.args.get("by")
+    if not upstream_url:
+        return jsonify({"error": "?by=<upstream base_url> is required"}), 400
+    target = upstream_url.rstrip("/") + "/models"
+    headers = {"User-Agent": f"ai-gateway/{VERSION}"}
+    for h in ("Authorization", "x-opencode-session"):
+        v = request.headers.get(h)
+        if v:
+            headers[h] = v
+    try:
+        resp = requests.get(target, headers=headers, timeout=30, proxies=PROXIES)
+    except requests.RequestException as e:
+        err = f"UPSTREAM REQUEST FAILED: {type(e).__name__}: {e}"
+        print(f"  {err}")
+        print(f"  TARGET: {target}")
+        return jsonify({"error": err}), 502
+    return Response(resp.content, status=resp.status_code,
+                    content_type=resp.headers.get("content-type", "application/json"))
 
 
 @app.route("/api/usage")

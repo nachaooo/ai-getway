@@ -1,6 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [0.6.26] - 2026-08-29
+
+### Fixed
+- **修复 `opencode.ai/zen/go/v1`（OpenCode Go）经网关代理失败**：OpenCode Go 端点对 `/chat/completions`、`/models` 强制要求 `x-opencode-session` 会话头，缺失时返回 400 `MissingSessionID`，且要求请求携带 `coding-agent` 风格的 `User-Agent`。此前网关 `_proxy_passthrough` 只原样透传 `Authorization`/`User-Agent`，既不转发也不生成该头，导致走网关调用 opencode-go 系列模型（如 `deepseek-v4-flash`）全部失败。
+  - 新增 `_upstream_headers(body, model)` 辅助函数：透传上游所需头；`User-Agent` 若缺失或为通用库名（python-requests/curl/node/axios/okhttp/ai-sdk 等）则替换为 `ai-gateway/{VERSION}`；`x-opencode-session` 若客户端未携带，则从 `model + 首条消息/输入` 派生稳定的 `gw-` 前缀会话 ID（同一会话内不变，利于上游路由与缓存）。
+  - 新增 `GET /v1/models?by=` 透传路由，补上此前缺失的模型列表接口（修复 `/models` 404）。
+  - 涉及文件：`app.py`（`_upstream_headers`、`_proxy_passthrough`、`/v1/models`）、`tests/test_app.py`（新增 `TestUpstreamHeaders` 5 用例 + `TestProxyModels` 2 用例，覆盖会话派生/稳定/转发、通用 UA 替换、agent UA 透传、models 透传与 `?by=` 校验）。
 
 ## [0.6.24] - 2026-08-28
 

@@ -276,6 +276,115 @@ class TestProxyValidation(unittest.TestCase):
         self.assertIn("model is required", data["error"])
 
 
+class TestUpstreamHeaders(unittest.TestCase):
+    """OpenCode Go 端点强制要求：x-opencode-session + coding-agent UA"""
+
+    def setUp(self):
+        self.client = app.app.test_client()
+        self.body = {"model": "deepseek-v4-flash", "messages": [{"role": "user", "content": "hi"}]}
+
+    def test_session_generated_when_missing(self):
+        """客户端未带 x-opencode-session 时自动派生稳定会话 ID"""
+        with patch("app.requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.ok = True
+            mock_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+            mock_post.return_value = mock_resp
+            resp = self.client.post("/v1/chat/completions?by=https://opencode.ai/zen/go/v1", json=self.body)
+            self.assertEqual(resp.status_code, 200)
+            headers = mock_post.call_args.kwargs["headers"]
+            self.assertTrue(headers["x-opencode-session"].startswith("gw-"))
+
+    def test_session_stable_per_conversation(self):
+        """同一会话（首条消息相同）派生的会话 ID 保持稳定"""
+        with patch("app.requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.ok = True
+            mock_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+            mock_post.return_value = mock_resp
+            self.client.post("/v1/chat/completions?by=https://opencode.ai/zen/go/v1", json=self.body)
+            self.client.post("/v1/chat/completions?by=https://opencode.ai/zen/go/v1", json=dict(self.body))
+            calls = mock_post.call_args_list
+            self.assertEqual(calls[0].kwargs["headers"]["x-opencode-session"],
+                             calls[1].kwargs["headers"]["x-opencode-session"])
+
+    def test_session_forwarded_when_present(self):
+        """客户端已带 x-opencode-session 时原样透传"""
+        with patch("app.requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.ok = True
+            mock_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+            mock_post.return_value = mock_resp
+            resp = self.client.post(
+                "/v1/chat/completions?by=https://opencode.ai/zen/go/v1",
+                json=self.body,
+                headers={"x-opencode-session": "my-session-123"},
+            )
+            self.assertEqual(resp.status_code, 200)
+            headers = mock_post.call_args.kwargs["headers"]
+            self.assertEqual(headers["x-opencode-session"], "my-session-123")
+
+    def test_generic_user_agent_replaced(self):
+        """通用库 UA（python-requests/curl 等）替换为 ai-gateway 自有标识"""
+        with patch("app.requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.ok = True
+            mock_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+            mock_post.return_value = mock_resp
+            for ua in ("python-requests/2.31.0", "curl/8.0.1", "Go-http-client/2.0", "node"):
+                self.client.post("/v1/chat/completions?by=https://opencode.ai/zen/go/v1",
+                                 json=self.body, headers={"User-Agent": ua})
+                sent_ua = mock_post.call_args.kwargs["headers"]["User-Agent"]
+                self.assertTrue(sent_ua.startswith("ai-gateway/"), f"UA '{ua}' 未被替换: {sent_ua}")
+
+    def test_self_identified_user_agent_forwarded(self):
+        """测试客户端自带的自标识 UA（Werkzeug/x.y）原样透传，不被替换"""
+        with patch("app.requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.ok = True
+            mock_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+            mock_post.return_value = mock_resp
+            resp = self.client.post("/v1/chat/completions?by=https://opencode.ai/zen/go/v1", json=self.body)
+            self.assertEqual(resp.status_code, 200)
+            sent_ua = mock_post.call_args.kwargs["headers"]["User-Agent"]
+            self.assertTrue(sent_ua.startswith("Werkzeug/"), f"自标识 UA 被意外替换: {sent_ua}")
+
+    def test_agent_user_agent_forwarded(self):
+        """coding-agent UA 原样透传"""
+        with patch("app.requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.ok = True
+            mock_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+            mock_post.return_value = mock_resp
+            self.client.post("/v1/chat/completions?by=https://opencode.ai/zen/go/v1",
+                             json=self.body, headers={"User-Agent": "opencode/1.5.0"})
+            self.assertEqual(mock_post.call_args.kwargs["headers"]["User-Agent"], "opencode/1.5.0")
+
+
+class TestProxyModels(unittest.TestCase):
+    def setUp(self):
+        self.client = app.app.test_client()
+
+    def test_models_requires_by(self):
+        """缺少 ?by= 返回 400"""
+        resp = self.client.get("/v1/models")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_models_passthrough(self):
+        """GET /v1/models?by= 正确拼接 /models 并透传响应"""
+        with patch("app.requests.get") as mock_get:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = b'{"object":"list","data":[{"id":"kimi-k3"}]}'
+            mock_resp.headers = {"content-type": "application/json"}
+            mock_get.return_value = mock_resp
+            resp = self.client.get("/v1/models?by=https://opencode.ai/zen/go/v1",
+                                   headers={"Authorization": "Bearer sk-test"})
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(mock_get.call_args.args[0], "https://opencode.ai/zen/go/v1/models")
+            self.assertEqual(mock_get.call_args.kwargs["headers"]["Authorization"], "Bearer sk-test")
+
+
 class TestInsights(unittest.TestCase):
     def test_normalize_insight_with_suggestions(self):
         """解析 LLM 输出，正确提取 summary/topics/suggestions"""
