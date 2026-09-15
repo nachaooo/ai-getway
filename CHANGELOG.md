@@ -5,6 +5,9 @@
 ### Fixed
 - **Web 看板打开极慢（20–30 秒）**：`templates/index.html` 在 `<body>` 内同步加载外部 CDN `https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js`。该 CDN 在部分网络（如国内多数宽带）不可达，实测下载超时约 21 秒、0 字节，且该脚本位于全部业务 JS 之前，导致整个看板的数据加载与图表渲染被阻塞直到超时。改为随包内置：新增 `static/chart.umd.min.js`（Chart.js v4.4.7，约 201KB），`index.html` 引用改为同源 `/static/chart.umd.min.js`，彻底去掉运行时对外部 CDN 的依赖。
   - 涉及文件：`templates/index.html`（引用改为 `/static/chart.umd.min.js`）、`static/chart.umd.min.js`（新增，随 `AI Gateway.spec` 的 `static` 目录一并打包）。
+- **`deploy.ps1` 无法运行/连接失败，部署脚本整体失效**：三处问题叠加。① `"$DEPLOY_USER@$DEPLOY_HOST:/tmp/..."` 中 `$DEPLOY_HOST:` 被 PowerShell 解析为「变量+冒号」在解析期直接报错，脚本根本无法启动；② SSH 检查/建目录/远端执行三处只用了 `"$DEPLOY_HOST"`，漏掉用户名，导致 ssh 以当前 Windows 用户（如 `15680`）连接而 `Permission denied`；③ `$SSH_ARGS` 是单个字符串，传给 ssh/scp 会被当成一个参数；且 ssh 用 `-p`、scp 用 `-P` 指定端口，共用同一份参数会让 scp 把端口号 `22` 误当文件。
+  - 修复：统一改用 `${DEPLOY_USER}@${DEPLOY_HOST}`；`$SSH_ARGS`/新增 `$SCP_ARGS` 改为参数数组分别用于 ssh（`-p`）与 scp（`-P`）；`Get-Content "config.conf"` 增加 `-Encoding UTF8`，避免中文注释行被按 ANSI 解读时吞掉下一行，导致 `VERSION`、`WEB_PORT` 解析为空。
+  - 涉及文件：`deploy.ps1`。
 
 ## [0.6.26] - 2026-08-29
 

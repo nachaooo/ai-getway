@@ -3,7 +3,7 @@
 # 依赖：本地 Windows 自带 tar + ssh（无需安装 rsync）
 
 $config = @{}
-Get-Content "config.conf" | ForEach-Object {
+Get-Content "config.conf" -Encoding UTF8 | ForEach-Object {
     $line = $_.Trim()
     if ($line -and !$line.StartsWith("#")) {
         $parts = $line -split "=", 2
@@ -23,7 +23,9 @@ $WEB_PORT = $config["WEB_PORT"]
 $APP_NAME = $config["APP_NAME"]
 $VERSION = $config["VERSION"]
 
-$SSH_ARGS = "-i $SSH_KEY -p $SSH_PORT -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10"
+$SSH_ARGS = @("-i", $SSH_KEY, "-p", $SSH_PORT, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10")
+# scp 端口参数为 -P（大写），与 ssh 的 -p 不同，不能共用 $SSH_ARGS
+$SCP_ARGS = @("-i", $SSH_KEY, "-P", $SSH_PORT, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10")
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "AI Gateway 部署脚本" -ForegroundColor Cyan
@@ -36,7 +38,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 
 # 检查 SSH 连接
 Write-Host "`n[1/5] 检查 SSH 连接..." -ForegroundColor Green
-$sshTest = ssh $SSH_ARGS "$DEPLOY_HOST" "echo 'SSH OK'" 2>&1
+$sshTest = ssh $SSH_ARGS "${DEPLOY_USER}@${DEPLOY_HOST}" "echo 'SSH OK'" 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "SSH 连接失败: $sshTest" -ForegroundColor Red
     exit 1
@@ -45,7 +47,7 @@ Write-Host "SSH 连接成功" -ForegroundColor Green
 
 # 创建远程目录
 Write-Host "`n[2/5] 创建远程目录..." -ForegroundColor Green
-ssh $SSH_ARGS "$DEPLOY_HOST" "mkdir -p $DEPLOY_PATH"
+ssh $SSH_ARGS "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p $DEPLOY_PATH"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "创建目录失败" -ForegroundColor Red
     exit 1
@@ -61,17 +63,17 @@ $localDb = Join-Path $backupDir "usage_${DEPLOY_HOST}_${ts}.db.gz"
 $localParts = Join-Path $backupDir "parts_${DEPLOY_HOST}_${ts}"
 try {
     # 1. 远程 gzip + split
-    ssh $SSH_ARGS $DEPLOY_USER@$DEPLOY_HOST "rm -rf /tmp/usage.parts; mkdir -p /tmp/usage.parts; gzip -c /opt/ai-getway/data/usage.db | split -b 30M - /tmp/usage.parts/part-"
+    ssh $SSH_ARGS "${DEPLOY_USER}@${DEPLOY_HOST}" "rm -rf /tmp/usage.parts; mkdir -p /tmp/usage.parts; gzip -c /opt/ai-getway/data/usage.db | split -b 30M - /tmp/usage.parts/part-"
     # 2. 本地建目录，逐块 scp（小块避免大流量卡死）
     if (Test-Path $localParts) { Remove-Item $localParts -Recurse -Force }
     New-Item -ItemType Directory -Path $localParts | Out-Null
-    $partList = ssh $SSH_ARGS $DEPLOY_USER@$DEPLOY_HOST "ls /tmp/usage.parts/"
+    $partList = ssh $SSH_ARGS "${DEPLOY_USER}@${DEPLOY_HOST}" "ls /tmp/usage.parts/"
     $i = 0
     foreach ($p in $partList) {
         $i++
-        scp $SSH_ARGS "$DEPLOY_USER@$DEPLOY_HOST:/tmp/usage.parts/$p" (Join-Path $localParts $p)
+        scp $SCP_ARGS "${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/usage.parts/$p" (Join-Path $localParts $p)
     }
-    ssh $SSH_ARGS $DEPLOY_USER@$DEPLOY_HOST "rm -rf /tmp/usage.parts"
+    ssh $SSH_ARGS "${DEPLOY_USER}@${DEPLOY_HOST}" "rm -rf /tmp/usage.parts"
     # 3. 本地合并（cmd type）+ 清理临时目录
     $files = Get-ChildItem $localParts -Filter "part-*" | Sort-Object Name
     $cmd = "type " + ($files.FullName -join " ")
@@ -80,7 +82,7 @@ try {
     "本地备份完成: $localDb (" + (Get-Item $localDb).Length + " bytes, gzip 压缩 + 分块传输)"
 } catch {
     Write-Host "备份失败（不影响部署）: " + $_.Exception.Message -ForegroundColor Yellow
-    ssh $SSH_ARGS $DEPLOY_USER@$DEPLOY_HOST "rm -rf /tmp/usage.parts /tmp/usage.db.gz" 2>$null
+    ssh $SSH_ARGS "${DEPLOY_USER}@${DEPLOY_HOST}" "rm -rf /tmp/usage.parts /tmp/usage.db.gz" 2>$null
     Remove-Item $localParts -Recurse -Force -ErrorAction SilentlyContinue
 }
 
@@ -101,7 +103,7 @@ $excludes = @(
 )
 $tarCmd = "tar -czf - $($excludes -join ' ') -C . ."
 $remoteUnpack = "mkdir -p $DEPLOY_PATH && tar -xzf - -C $DEPLOY_PATH"
-$pipeline = "$tarCmd | ssh $SSH_ARGS $DEPLOY_USER@$DEPLOY_HOST `"$remoteUnpack`""
+$pipeline = "$tarCmd | ssh $SSH_ARGS ${DEPLOY_USER}@${DEPLOY_HOST} `"$remoteUnpack`""
 & cmd /c $pipeline
 if ($LASTEXITCODE -ne 0) {
     Write-Host "文件同步失败" -ForegroundColor Red
@@ -147,7 +149,7 @@ sleep 2
 systemctl status ${APP_NAME} --no-pager
 "@
 
-ssh $SSH_ARGS "$DEPLOY_HOST" $remoteScript
+ssh $SSH_ARGS "${DEPLOY_USER}@${DEPLOY_HOST}" $remoteScript
 if ($LASTEXITCODE -ne 0) {
     Write-Host "远程配置失败" -ForegroundColor Red
     exit 1
