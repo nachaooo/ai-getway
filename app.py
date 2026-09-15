@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_file
 
-VERSION = "0.6.26"
+VERSION = "0.6.27"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -57,7 +57,7 @@ _db_path = os.path.expandvars(_cfg("db_path", "DB_PATH", os.path.join(DATA_DIR, 
 DB_PATH = os.path.join(EXE_DIR, _db_path) if not os.path.isabs(_db_path) else _db_path
 
 # 单一数据库文件：对话内容与用量统一存储，方便备份/同步
-# 旧版本（≤0.6.26）的 conversations.db 独立文件，在 init_db 中自动合并迁移
+# 旧版本（≤0.6.27）的 conversations.db 独立文件，在 init_db 中自动合并迁移
 CONV_DB_PATH = DB_PATH
 _legacy_conv_path = os.path.expandvars(_cfg("conv_db_path", "CONV_DB_PATH", os.path.join(DATA_DIR, "conversations.db")))
 LEGACY_CONV_DB_PATH = os.path.join(EXE_DIR, _legacy_conv_path) if not os.path.isabs(_legacy_conv_path) else _legacy_conv_path
@@ -224,7 +224,7 @@ def init_db():
     conn = get_conv_db()
     ensure_conv_schema(conn)
     conn.close()
-    # 旧版本（≤0.6.26）conversations 独立文件：启动时自动合并进单库
+    # 旧版本（≤0.6.27）conversations 独立文件：启动时自动合并进单库
     _merge_legacy_conv_db()
     # 迁移脚本在服务运行中无法 VACUUM（需独占锁），留下标记；启动时独占连接压缩
     marker = CONV_DB_PATH + ".needs_vacuum"

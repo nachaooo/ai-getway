@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.27] - 2026-09-15
+
+### Fixed
+- **Web 看板打开极慢（20–30 秒）**：`templates/index.html` 在 `<body>` 内同步加载外部 CDN `https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js`。该 CDN 在部分网络（如国内多数宽带）不可达，实测下载超时约 21 秒、0 字节，且该脚本位于全部业务 JS 之前，导致整个看板的数据加载与图表渲染被阻塞直到超时。改为随包内置：新增 `static/chart.umd.min.js`（Chart.js v4.4.7，约 201KB），`index.html` 引用改为同源 `/static/chart.umd.min.js`，彻底去掉运行时对外部 CDN 的依赖。
+  - 涉及文件：`templates/index.html`（引用改为 `/static/chart.umd.min.js`）、`static/chart.umd.min.js`（新增，随 `AI Gateway.spec` 的 `static` 目录一并打包）。
+
 ## [0.6.26] - 2026-08-29
 
 ### Fixed
