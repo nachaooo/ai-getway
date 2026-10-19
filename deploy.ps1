@@ -116,6 +116,22 @@ Write-Host "`n[4/5] 配置远程环境..." -ForegroundColor Green
 $remoteScript = @"
 cd $DEPLOY_PATH
 
+# 确保有 swap：内存触顶时提供缓冲，避免直接 OOM 把整机拖到假死
+if ! swapon --show | grep -q .; then
+  if [ ! -f /swapfile ]; then
+    fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+    chmod 600 /swapfile
+    mkswap /swapfile
+  fi
+  swapon /swapfile
+  grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  echo 'swap 已启用: 2G'
+else
+  echo 'swap 已存在，跳过创建'
+fi
+sysctl -w vm.swappiness=10
+grep -q '^vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >> /etc/sysctl.conf
+
 # 安装 Python 依赖
 pip3 install -r requirements.txt
 
@@ -124,16 +140,25 @@ cat > /etc/systemd/system/${APP_NAME}.service << 'EOF'
 [Unit]
 Description=AI Gateway Service
 After=network.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=$DEPLOY_PATH
 ExecStart=/usr/bin/python3 app.py
-Restart=always
-RestartSec=5
+Restart=on-failure
+RestartSec=10
 Environment=PORT=$WEB_PORT
 Environment=DB_PATH=$DEPLOY_PATH/data/usage.db
+Environment=ENABLE_DEEPSEEK_TOKENIZER=0
+Environment=THREADS=32
+Environment=PYTHONUNBUFFERED=1
+MemoryHigh=2000M
+MemoryMax=2500M
+MemorySwapMax=512M
+OOMPolicy=stop
 
 [Install]
 WantedBy=multi-user.target
@@ -147,6 +172,12 @@ systemctl restart ${APP_NAME}
 # 检查服务状态
 sleep 2
 systemctl status ${APP_NAME} --no-pager
+
+# 内存水位快照：部署后确认服务实际占用
+echo '--- 内存水位 (MB) ---'
+free -m
+echo '--- 服务实际占用 ---'
+systemctl show ${APP_NAME} -p MemoryCurrent
 "@
 
 ssh $SSH_ARGS "${DEPLOY_USER}@${DEPLOY_HOST}" $remoteScript

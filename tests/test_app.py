@@ -105,6 +105,124 @@ class TestCleanMessages(unittest.TestCase):
         self.assertEqual(len(result["messages"]), 1)
 
 
+class TestReasoningReplay(unittest.TestCase):
+    """DeepSeek 思考模式 + tools 的 reasoning_content 回填契约。"""
+
+    def setUp(self):
+        # 每个用例隔离缓存，避免相互污染
+        app._reasoning_by_toolcall.clear()
+        app._reasoning_by_content.clear()
+
+    def test_patch_by_toolcall_id(self):
+        """客户端重放历史时丢弃 reasoning_content，按 tool_call id 回填"""
+        app._reasoning_cache_put(["call_abc"], "I will check the file", "thinking...")
+        body = {
+            "tools": [{"type": "function", "function": {"name": "read"}}],
+            "messages": [
+                {"role": "user", "content": "read it"},
+                {"role": "assistant", "content": "", "tool_calls": [{"id": "call_abc"}]},
+                {"role": "tool", "tool_call_id": "call_abc", "content": "ok"},
+            ],
+        }
+        result = app._replay_reasoning(body)
+        self.assertEqual(result["messages"][1].get("reasoning_content"), "thinking...")
+
+    def test_patch_by_content_fingerprint(self):
+        """无 tool_calls 的轮次按 assistant content 指纹兜底回填"""
+        app._reasoning_cache_put([], "final answer", "reasoning without tools")
+        body = {
+            "tools": [{"type": "function", "function": {"name": "read"}}],
+            "messages": [
+                {"role": "assistant", "content": "final answer"},
+            ],
+        }
+        result = app._replay_reasoning(body)
+        self.assertEqual(result["messages"][0].get("reasoning_content"), "reasoning without tools")
+
+    def test_skip_without_tools(self):
+        """未携带 tools 时不处理（非 DeepSeek 思考模式契约的触发条件）"""
+        app._reasoning_cache_put(["call_abc"], "", "should not be injected")
+        body = {"messages": [{"role": "assistant", "content": "", "tool_calls": [{"id": "call_abc"}]}]}
+        result = app._replay_reasoning(body)
+        self.assertNotIn("reasoning_content", result["messages"][0])
+
+    def test_do_not_overwrite_existing(self):
+        """客户端已带 reasoning_content 时原样保留，绝不覆盖"""
+        app._reasoning_cache_put(["call_abc"], "", "cached value")
+        body = {
+            "tools": [{"type": "function", "function": {"name": "read"}}],
+            "messages": [
+                {"role": "assistant", "content": "", "tool_calls": [{"id": "call_abc"}],
+                 "reasoning_content": "client value"},
+            ],
+        }
+        result = app._replay_reasoning(body)
+        self.assertEqual(result["messages"][0]["reasoning_content"], "client value")
+
+    def test_replay_disabled(self):
+        """开关关闭时完全不介入"""
+        app._reasoning_cache_put(["call_abc"], "", "cached value")
+        original = app.ENABLE_REASONING_REPLAY
+        try:
+            app.ENABLE_REASONING_REPLAY = False
+            body = {
+                "tools": [{"type": "function", "function": {"name": "read"}}],
+                "messages": [{"role": "assistant", "content": "", "tool_calls": [{"id": "call_abc"}]}],
+            }
+            result = app._replay_reasoning(body)
+            self.assertNotIn("reasoning_content", result["messages"][0])
+        finally:
+            app.ENABLE_REASONING_REPLAY = original
+
+    def test_cache_roundtrip_and_eviction(self):
+        """缓存读写往返正常，且超上限后按 LRU 淘汰最旧项"""
+        app._reasoning_cache_put(["id1"], "", "r1")
+        self.assertEqual(app._reasoning_cache_get(["id1"], ""), "r1")
+
+        limit = app._REASONING_CACHE_MAX
+        original = app._REASONING_CACHE_MAX
+        try:
+            app._REASONING_CACHE_MAX = 2
+            app._reasoning_cache_put(["a"], "", "ra")
+            app._reasoning_cache_put(["b"], "", "rb")
+            app._reasoning_cache_put(["c"], "", "rc")
+            self.assertIsNone(app._reasoning_cache_get(["a"], ""))
+            self.assertEqual(app._reasoning_cache_get(["c"], ""), "rc")
+        finally:
+            app._REASONING_CACHE_MAX = original
+            self.assertTrue(limit >= 1)
+
+    def test_empty_reasoning_not_cached(self):
+        """空 reasoning 不入缓存，避免无意义占用"""
+        app._reasoning_cache_put(["call_x"], "content", "")
+        self.assertIsNone(app._reasoning_cache_get(["call_x"], "content"))
+
+    def test_concurrent_put_get_no_exception(self):
+        """waitress 多线程并发读写不应抛异常（LRU 操作需加锁）"""
+        import threading
+        errors = []
+
+        def worker(n):
+            try:
+                for i in range(200):
+                    app._reasoning_cache_put([f"tc-{n}-{i}"], f"content-{n}-{i}", f"r-{n}-{i}")
+                    app._reasoning_cache_get([f"tc-{n}-{i}"], f"content-{n}-{i}")
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+
+        original = app._REASONING_CACHE_MAX
+        try:
+            app._REASONING_CACHE_MAX = 8  # 强制高频淘汰，放大竞态
+            threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        finally:
+            app._REASONING_CACHE_MAX = original
+        self.assertEqual(errors, [], f"并发读写抛异常: {errors[:3]}")
+
+
 class TestDatabaseAPI(unittest.TestCase):
     def setUp(self):
         """每个测试前重新初始化数据库并插入测试数据"""

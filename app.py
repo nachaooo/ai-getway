@@ -6,12 +6,14 @@ import time
 import hashlib
 import sqlite3
 import tempfile
+import threading
+from collections import OrderedDict
 from datetime import datetime, timedelta
 
 import requests
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_file
 
-VERSION = "0.6.27"
+VERSION = "0.6.29"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -370,10 +372,32 @@ def _msg_content(content):
 DEEPSEEK_TOKENIZER_DIR = os.path.join(RESOURCE_DIR, "tokenizers", "deepseek")
 _deepseek_tokenizer = None
 
+# 本地 transformers tokenizer 开关，默认关闭。
+# 加载 transformers + DeepSeek 词表会常驻数百 MB 内存，在小内存云主机上极易触发 OOM
+# （现象是整机假死：TCP 能握手但应用不响应）。token 计数以请求完成后上游返回的
+# usage 为准，本地计数只在缺失时兜底，轻量估算完全够用，不值得为记账引入几百 MB 常驻开销。
+# 确需精确计数时设置环境变量 ENABLE_DEEPSEEK_TOKENIZER=1。
+ENABLE_DEEPSEEK_TOKENIZER = os.environ.get("ENABLE_DEEPSEEK_TOKENIZER", "0") == "1"
+
+_tiktoken_encoder = None
+
+
+def _get_tiktoken_encoder():
+    """cl100k_base 编码表单例：只构建一次，避免重复加载词表。"""
+    global _tiktoken_encoder
+    if _tiktoken_encoder is None:
+        import tiktoken
+        _tiktoken_encoder = tiktoken.get_encoding("cl100k_base")
+    return _tiktoken_encoder
+
+
 def get_deepseek_tokenizer():
     global _deepseek_tokenizer
     if _deepseek_tokenizer is not None:
         return _deepseek_tokenizer if _deepseek_tokenizer else None
+    if not ENABLE_DEEPSEEK_TOKENIZER:
+        _deepseek_tokenizer = False
+        return None
     try:
         from transformers import AutoTokenizer
         _deepseek_tokenizer = AutoTokenizer.from_pretrained(DEEPSEEK_TOKENIZER_DIR, trust_remote_code=True)
@@ -394,10 +418,9 @@ def count_tokens(model: str, text: str) -> int:
         import tiktoken
         try:
             enc = tiktoken.encoding_for_model(model)
-            return len(enc.encode(text))
         except KeyError:
-            enc = tiktoken.get_encoding("cl100k_base")
-            return len(enc.encode(text))
+            enc = _get_tiktoken_encoder()
+        return len(enc.encode(text))
     except ImportError:
         pass
     return max(1, len(text) // 4)
@@ -607,60 +630,89 @@ def _handle_stream(target_url, headers, body_data, model, provider_label, prompt
         return jsonify({"error": err}), resp.status_code
 
     complete_content = ""
+    reasoning_acc = ""
+    pure_content = ""
+    tool_call_ids = {}
     usage_data = None
     path = request.path
     start_time = datetime.now()
     state = {"end_time": None}
 
     def generate():
-        nonlocal complete_content, usage_data
+        nonlocal complete_content, usage_data, reasoning_acc, pure_content
         resp.encoding = "utf-8"
         buf = []
-        for raw_line in resp.iter_lines(decode_unicode=True):
-            if raw_line == "":
-                if not buf:
+        try:
+            for raw_line in resp.iter_lines(decode_unicode=True):
+                if raw_line == "":
+                    if not buf:
+                        continue
+                    event = "\n".join(buf)
+                    buf = []
+                    yield event + "\n\n"
+                    for l in event.split("\n"):
+                        if not l.startswith("data:"):
+                            continue
+                        payload = l[5:].lstrip()
+                        if payload == "[DONE]":
+                            continue
+                        try:
+                            chunk = json.loads(payload)
+                            if is_responses:
+                                ctype = chunk.get("type")
+                                if ctype == "response.output_text.delta":
+                                    delta_text = chunk.get("delta") or ""
+                                    complete_content += delta_text
+                                    pure_content += delta_text
+                                elif ctype in ("response.completed", "response.incomplete"):
+                                    resp_obj = chunk.get("response") or {}
+                                    if resp_obj.get("usage"):
+                                        usage_data = resp_obj["usage"]
+                            elif provider_label == "anthropic":
+                                if chunk.get("type") == "content_block_delta":
+                                    delta_text = chunk.get("delta", {}).get("text") or ""
+                                    complete_content += delta_text
+                                    pure_content += delta_text
+                                elif chunk.get("type") == "message_delta":
+                                    usage_data = chunk.get("usage", {})
+                            else:
+                                choices = chunk.get("choices", [])
+                                if choices and len(choices) > 0:
+                                    delta = choices[0].get("delta", {})
+                                    msg = choices[0].get("message", {})
+                                    # 真实正文与思维链分开累计：正文用于缓存指纹，
+                                    # 思维链单独留存以便下一轮回填
+                                    real = delta.get("content") or msg.get("content")
+                                    if real:
+                                        complete_content += real
+                                        pure_content += real
+                                    think = delta.get("reasoning_content")
+                                    if think:
+                                        reasoning_acc += think
+                                        complete_content += think
+                                    for tc in (delta.get("tool_calls") or msg.get("tool_calls") or []):
+                                        if isinstance(tc, dict):
+                                            idx = tc.get("index", 0)
+                                            if tc.get("id"):
+                                                tool_call_ids[idx] = tc["id"]
+                                if chunk.get("usage"):
+                                    usage_data = chunk["usage"]
+                        except json.JSONDecodeError:
+                            pass
                     continue
-                event = "\n".join(buf)
-                buf = []
-                yield event + "\n\n"
-                for l in event.split("\n"):
-                    if not l.startswith("data:"):
-                        continue
-                    payload = l[5:].lstrip()
-                    if payload == "[DONE]":
-                        continue
-                    try:
-                        chunk = json.loads(payload)
-                        if is_responses:
-                            ctype = chunk.get("type")
-                            if ctype == "response.output_text.delta":
-                                complete_content += chunk.get("delta") or ""
-                            elif ctype in ("response.completed", "response.incomplete"):
-                                resp_obj = chunk.get("response") or {}
-                                if resp_obj.get("usage"):
-                                    usage_data = resp_obj["usage"]
-                        elif provider_label == "anthropic":
-                            if chunk.get("type") == "content_block_delta":
-                                complete_content += chunk.get("delta", {}).get("text") or ""
-                            elif chunk.get("type") == "message_delta":
-                                usage_data = chunk.get("usage", {})
-                        else:
-                            choices = chunk.get("choices", [])
-                            if choices and len(choices) > 0:
-                                content = choices[0].get("delta", {}).get("content") or choices[0].get("message", {}).get("content")
-                                content = content or choices[0].get("delta", {}).get("reasoning_content")
-                                if content:
-                                    complete_content += content
-                            if chunk.get("usage"):
-                                usage_data = chunk["usage"]
-                    except json.JSONDecodeError:
-                        pass
-                continue
-            buf.append(raw_line)
-        if buf:
-            yield "\n".join(buf) + "\n\n"
+                buf.append(raw_line)
+            if buf:
+                yield "\n".join(buf) + "\n\n"
+        finally:
+            # 流结束（或客户端提前断开）即写入缓存，保证下一轮能回填。
+            # 不依赖 call_on_close —— 它在部分运行环境/测试客户端下不触发。
+            state["end_time"] = datetime.now()
+            _reasoning_cache_put(
+                [tool_call_ids[k] for k in sorted(tool_call_ids)],
+                pure_content,
+                reasoning_acc,
+            )
         yield "data: [DONE]\n\n"
-        state["end_time"] = datetime.now()
 
     def do_log():
         if usage_data:
@@ -699,11 +751,113 @@ def _clean_messages(body_dict: dict) -> dict:
     return body_dict
 
 
+# ── reasoning_content 回填（DeepSeek 思考模式 + tools 的 400 修复）──────────
+# 背景：DeepSeek 思考模式在请求携带 tools 时，要求历史中 assistant 消息的
+# reasoning_content 原样回传（含未发生工具调用的轮次），否则上游返回
+#   400 invalid_request_error:
+#   The `reasoning_content` in the thinking mode must be passed back to the API.
+# 但 reasoning_content 不属于 OpenAI 标准 schema，客户端（WorkBuddy / opencode /
+# Cursor 等）重建消息历史时普遍只保留 role / content / tool_calls，该字段被丢弃，
+# 于是第一轮工具调用之后的每个请求都 400。
+# 网关是整条链路中唯一同时看到「上游响应」与「下一轮请求」的位置，因此在此
+# 响应侧缓存、请求侧回填。缓存以 tool_call id 为首选键（唯一且稳定），
+# 以 assistant content 指纹为兜底键（无 tool_calls 的轮次）。
+# 关闭开关：ENABLE_REASONING_REPLAY=0
+ENABLE_REASONING_REPLAY = os.environ.get("ENABLE_REASONING_REPLAY", "1") != "0"
+_REASONING_CACHE_MAX = int(os.environ.get("REASONING_CACHE_MAX", "4096"))
+
+# tool_call id -> reasoning_content（首选键）
+_reasoning_by_toolcall = OrderedDict()
+# assistant content 的 sha1 -> reasoning_content（兜底键）
+_reasoning_by_content = OrderedDict()
+# waitress 多线程并发读写，LRU 的 move_to_end/popitem 非原子，必须加锁，
+# 否则并发淘汰时可能抛 KeyError 把请求打成 500
+_reasoning_lock = threading.Lock()
+
+
+def _reasoning_cache_put(toolcall_ids, content, reasoning):
+    """缓存一轮 assistant 的 reasoning_content，按 tool_call id 与内容指纹双键写入。"""
+    if not ENABLE_REASONING_REPLAY or not reasoning:
+        return
+    with _reasoning_lock:
+        for tid in toolcall_ids or []:
+            if tid:
+                _reasoning_by_toolcall[tid] = reasoning
+                _reasoning_by_toolcall.move_to_end(tid)
+        while len(_reasoning_by_toolcall) > _REASONING_CACHE_MAX:
+            _reasoning_by_toolcall.popitem(last=False)
+        if content:
+            fp = hashlib.sha1(content.encode("utf-8")).hexdigest()
+            _reasoning_by_content[fp] = reasoning
+            _reasoning_by_content.move_to_end(fp)
+            while len(_reasoning_by_content) > _REASONING_CACHE_MAX:
+                _reasoning_by_content.popitem(last=False)
+
+
+def _reasoning_cache_get(toolcall_ids, content):
+    """按 tool_call id 优先、内容指纹兜底的顺序取回 reasoning_content。"""
+    if not ENABLE_REASONING_REPLAY:
+        return None
+    with _reasoning_lock:
+        for tid in toolcall_ids or []:
+            if tid and tid in _reasoning_by_toolcall:
+                _reasoning_by_toolcall.move_to_end(tid)
+                return _reasoning_by_toolcall[tid]
+        if content:
+            fp = hashlib.sha1(content.encode("utf-8")).hexdigest()
+            if fp in _reasoning_by_content:
+                _reasoning_by_content.move_to_end(fp)
+                return _reasoning_by_content[fp]
+    return None
+
+
+def _replay_reasoning(body_dict: dict) -> dict:
+    """给历史中缺失 reasoning_content 的 assistant 消息回填缓存值。
+
+    只在请求携带 tools（DeepSeek 契约的触发条件）时处理；已带
+    reasoning_content 的消息原样保留，绝不覆盖客户端自带的值。
+    """
+    if not ENABLE_REASONING_REPLAY or not body_dict.get("tools"):
+        return body_dict
+    messages = body_dict.get("messages")
+    if not isinstance(messages, list):
+        return body_dict
+    patched = 0
+    for m in messages:
+        if not isinstance(m, dict) or m.get("role") != "assistant":
+            continue
+        if m.get("reasoning_content"):
+            continue
+        tool_ids = [tc.get("id") for tc in (m.get("tool_calls") or []) if isinstance(tc, dict)]
+        content = m.get("content")
+        text = content if isinstance(content, str) else _msg_text(content)
+        cached = _reasoning_cache_get(tool_ids, text)
+        if cached:
+            m["reasoning_content"] = cached
+            patched += 1
+    if patched:
+        print(f"  REASONING REPLAY: patched {patched} assistant message(s)")
+    return body_dict
+
+
 # 通用 HTTP 库/SDK 的 User-Agent 前缀：OpenCode Go 等上游要求 coding-agent 自有身份，需替换
 _GENERIC_UA_PREFIXES = (
     "python-requests", "python-httpx", "curl", "wget", "go-http-client",
     "node", "undici", "axios", "okhttp", "java/", "apache-httpclient", "ai-sdk",
 )
+
+# 日志脱敏：这些头原样打印会把 API key 落到日志文件里
+_SENSITIVE_HEADERS = {"authorization", "x-api-key", "api-key", "cookie", "proxy-authorization"}
+
+
+def _mask_headers(headers) -> dict:
+    """返回脱敏后的请求头副本，供日志打印使用。"""
+    masked = {}
+    for k, v in headers.items():
+        if k.lower() in _SENSITIVE_HEADERS:
+            v = (v[:12] + "...") if isinstance(v, str) and len(v) > 12 else "***"
+        masked[k] = v
+    return masked
 
 
 def _upstream_headers(body, model):
@@ -734,8 +888,9 @@ def _upstream_headers(body, model):
 def _proxy_passthrough(upstream_url, body, model, stream):
     headers = _upstream_headers(body, model)
 
-    print(f"  INCOMING HEADERS: {dict(request.headers)}")
+    print(f"  INCOMING HEADERS: {_mask_headers(request.headers)}")
     body = _clean_messages(body)
+    body = _replay_reasoning(body)
     model = body.get("model", "")
     hostname = upstream_url.replace("https://", "").replace("http://", "").split("/")[0]
     provider_label = hostname.split(":")[0]
@@ -767,6 +922,16 @@ def _proxy_passthrough(upstream_url, body, model, stream):
         return jsonify({"error": err}), resp.status_code
 
     data = resp.json()
+    # 缓存本轮 reasoning_content，供下一轮请求回填（DeepSeek 思考模式契约）
+    try:
+        _msg = (data.get("choices") or [{}])[0].get("message", {}) or {}
+        _reasoning_cache_put(
+            [tc.get("id") for tc in (_msg.get("tool_calls") or []) if isinstance(tc, dict)],
+            _msg.get("content"),
+            _msg.get("reasoning_content"),
+        )
+    except Exception:
+        pass
     usage = data.get("usage", {})
     if usage.get("prompt_tokens"):
         prompt_tokens = usage["prompt_tokens"]
@@ -1530,6 +1695,26 @@ def api_insights():
 
 init_db()
 
+
+def _serve():
+    """启动 HTTP 服务。
+
+    优先使用 waitress（生产级 WSGI 容器，线程池有硬上限，内存可控）；
+    未安装时回落到 Flask 内置开发服务器，仅供本地调试。
+    Flask 开发服务器每请求新建线程且无上限，并发流式请求下内存会失控，线上不可用。
+    """
+    threads = int(os.environ.get("THREADS", "32"))
+    try:
+        from waitress import serve
+    except ImportError:
+        print(f"AI Gateway (flask dev server) running on http://0.0.0.0:{PORT}")
+        print("  警告：当前为开发服务器，并发与内存均无保障。请安装 waitress：pip install waitress")
+        app.run(host="0.0.0.0", port=PORT, threaded=True)
+        return
+    # channel_timeout 需大于上游最慢的首字节延迟，否则长思考请求会被容器提前掐断
+    print(f"AI Gateway (waitress) running on http://0.0.0.0:{PORT} | threads={threads}")
+    serve(app, host="0.0.0.0", port=PORT, threads=threads, channel_timeout=300)
+
+
 if __name__ == "__main__":
-    print(f"AI Gateway running on http://0.0.0.0:{PORT}")
-    app.run(host="0.0.0.0", port=PORT)
+    _serve()

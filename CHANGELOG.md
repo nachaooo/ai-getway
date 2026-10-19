@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.6.29] - 2026-10-19
+
+### Fixed
+- **DeepSeek 思考模式 + tools 全链路 400，对话频繁中断**：请求携带 `tools` 参数时，DeepSeek 思考模式契约要求历史中**每个** assistant 消息的 `reasoning_content` 原样回传（含未发生工具调用的轮次），缺失即返回
+  `400 invalid_request_error: The 'reasoning_content' in the thinking mode must be passed back to the API.`
+  而 `reasoning_content` 不属于 OpenAI 标准 schema，客户端（WorkBuddy / opencode / Cursor 等）重建历史时普遍只保留 `role` / `content` / `tool_calls`，该字段被丢弃 —— 于是**第一轮工具调用之后的所有请求全部 400**，表现为「对话总是中断」。
+  实测日志佐证：2026-10-19 单日 17 次会话中断，其中 9 次为该 400（`stream loop failed: 400 ... reasoning_content ... must be passed back`），且集中在工具调用高频时段。
+  - 修复落点选在网关：它是整条链路（客户端 → 网关 → opencode zen go → DeepSeek）中**唯一同时看到「上游响应」与「下一轮请求」**的一环，客户端不可控，只能在此补偿。
+  - 新增 `_reasoning_cache_put()` / `_reasoning_cache_get()`：响应侧缓存 `reasoning_content`，采用**双键**——`tool_call id`（首选，唯一且稳定）+ `assistant content` 的 sha1 指纹（兜底，覆盖无 tool_calls 的收尾轮次）。缓存为进程内 LRU，默认上限 4096 条（`REASONING_CACHE_MAX` 可调）。
+  - 新增 `_replay_reasoning()`：请求侧为历史中缺失 `reasoning_content` 的 assistant 消息回填缓存值。仅在请求携带 `tools` 时介入（该契约的触发条件），**已带 `reasoning_content` 的消息原样保留、绝不覆盖**。
+  - 缓存写入挂在流式响应的 `generate()` 收尾（`finally`）与非流式响应解析处，不依赖 `response.call_on_close` —— 后者在部分运行环境/测试客户端下不触发，会导致缓存写空、修复失效。
+  - 流式解析中**将正文与思维链分开累计**（`pure_content` / `reasoning_acc`）：正文用于指纹键，思维链单独留存用于回填；此前二者混入同一 `complete_content`，会使指纹键失配。
+  - LRU 操作加 `threading.Lock`：waitress 为多线程（默认 `THREADS=32`），`OrderedDict.move_to_end` / `popitem` 非原子，并发淘汰时可能抛 `KeyError` 把请求打成 500。
+  - 新增开关 `ENABLE_REASONING_REPLAY`（默认 `1`）：置 `0` 可完全关闭回填，行为退回纯透传。
+  - 涉及文件：`app.py`、`tests/test_app.py`（新增 `TestReasoningReplay` 8 用例）、`tests/e2e_reasoning_replay.py`（新增）。
+
+### Added
+- **`tests/e2e_reasoning_replay.py`**：端到端契约验证。内置假上游，复刻 DeepSeek 的校验逻辑，走「网关收到第一轮带 reasoning+tool_calls 的响应 → 客户端按标准 schema 重建历史（丢弃 reasoning_content）→ 发第二轮」完整流程。修复前第二轮返回 400，修复后返回 200 且上游收到回填的 reasoning。用 Flask 测试客户端 + 内存假上游实现，不占用真实端口。
+- **`TestReasoningReplay` 单元测试**：覆盖 tool_call id 命中、content 指纹兜底、未携带 tools 时不介入、不覆盖客户端已有值、开关关闭、LRU 淘汰、空 reasoning 不入缓存、多线程并发读写无异常。
+
+## [0.6.28] - 2026-09-28
+
+### Fixed
+- **服务器内存耗尽导致整机假死、网关全面不可用**：生产服务器（`162.14.120.45`）内存被打满（监控实测 97.04% / 3324MB），SSH 登录报 `Connection timed out during banner exchange`（TCP 可握手但 sshd 连 banner 都发不出），`ai-getway.fangna.tech` 的请求全部无限挂起，opencode 侧表现为 `ProviderHeaderTimeoutError: Provider response headers timed out after 300000ms`。逐层定位到三处叠加原因：
+  - **① 重型 tokenizer 常驻内存**：`requirements.txt` 装着 `transformers`，而服务器以 `python3 app.py` 直跑源码（不像 exe 打包时 `AI Gateway.spec` 已把 `transformers` 列入 `excludes`），因此 `get_deepseek_tokenizer()` 会真实加载 `transformers` + DeepSeek 词表并常驻数百 MB 内存。改为默认禁用——新增环境变量 `ENABLE_DEEPSEEK_TOKENIZER`（默认 `0`），关闭时直接走轻量估算，与 exe 行为对齐；`requirements.txt` 中 `transformers` 降级为可选依赖并注释说明。
+  - **② Flask 内置开发服务器上生产**：`app.run(host="0.0.0.0", port=PORT)` 每请求新建线程且并发无上限，并发流式请求下线程数与内存双双失控。改为优先使用 waitress（线程池有硬上限，`THREADS` 可配，默认 32），未安装时回落开发服务器并打印警告。
+  - **③ nginx 超时过长放大故障**：`proxy_read_timeout 300s` 使后端假死时 nginx 干等 5 分钟才释放连接，造成连接大量堆积（监控实测 TCP 连接数稳定在 225~234）。收紧为 `proxy_read_timeout 180s` / `proxy_send_timeout 180s` / `proxy_connect_timeout 5s`（`read_timeout` 是「两次数据之间的间隔」而非总时长，180s 对连续流式输出极宽松，如需更长可调回），并补 `proxy_http_version 1.1` + `Connection ""` 以复用上游长连接。
+- **tiktoken 编码表重复构建**：`count_tokens` 每次调用都走 `tiktoken.get_encoding("cl100k_base")`。改为 `_get_tiktoken_encoder()` 单例缓存，避免重复加载词表。
+- **日志泄漏 API key**：`_proxy_passthrough` 的 `INCOMING HEADERS` 直接打印 `dict(request.headers)`，会把 `Authorization` 明文写进日志文件。新增 `_mask_headers()` 统一脱敏（`authorization` / `x-api-key` / `api-key` / `cookie` / `proxy-authorization`）。
+
+### Changed
+- **systemd 服务加内存护栏**：`deploy.ps1` 生成的单元新增 `MemoryHigh=2000M`、`MemoryMax=2500M`、`MemorySwapMax=512M`、`OOMPolicy=stop`，超限时只回收本服务，避免再次拖死整机；`Restart=always` + `RestartSec=5` 改为 `Restart=on-failure` + `RestartSec=10`，并加 `StartLimitIntervalSec=120`/`StartLimitBurst=5` 抑制重启风暴；新增 `ENABLE_DEEPSEEK_TOKENIZER=0`、`THREADS=32`、`PYTHONUNBUFFERED=1` 环境变量。
+- **部署流程补 swap 与内存快照**：`deploy.ps1` 远程步骤在装依赖前检测并创建 2G `/swapfile`（并写入 `/etc/fstab`）、设置 `vm.swappiness=10`，为内存触顶提供缓冲；部署末尾输出 `free -m` 与服务实际占用 `MemoryCurrent`，便于确认水位。
+- 涉及文件：`app.py`、`requirements.txt`、`deploy.ps1`、`nginx.conf`。**注意 `nginx.conf` 不在 `deploy.ps1` 的同步范围内，需手动覆盖到服务器 `/etc/nginx/` 对应站点配置后 `nginx -t && systemctl reload nginx`。**
+
 ## [0.6.27] - 2026-09-15
 
 ### Fixed
