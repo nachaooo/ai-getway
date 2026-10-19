@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **`deploy.ps1` 部署前备份改为服务器本地快照**：原实现把服务器 `usage.db` 经 `gzip → split 30M → 逐块 scp` 拉回本地，受 ~0.5MB/s 带宽限制耗时十几分钟且易中断。改为在服务器本地 `tar -czf` 出 `backups/usage_YYYYMMDD_HHMMSS.tar.gz`（含 `-wal`/`-shm`），零带宽、秒级，保留最近 5 份。**不变更也不覆盖服务器数据库。**
+  - 弃用 `sqlite3 .backup`：该库 1.9GB 且非 WAL，`.backup` 在持续写入下反复重试、实测卡死 10 分钟跑不完；`tar` 无此问题。
+  - `tar` 对「读取中被写入的文件」返回退出码 1（warning），已放宽为容忍 0/1，避免 `set -e` 误判失败。
+  - 同步排除项新增 `--exclude backups`：此前 `backups/` 未排除，本地备份碎片被一并同步到服务器（实测污染出 420MB 的 `parts_*` 目录）。
+  - 移除已无用的 `$SCP_ARGS`。
+- **同步 `nginx.conf` 到服务器**（0.6.28 遗留项，`deploy.ps1` 不覆盖该文件）：`ai-getway.conf` 的 `proxy_read_timeout` 300s → 180s，新增 `proxy_http_version 1.1`、`Connection ""`、`proxy_connect_timeout 5s`、`proxy_send_timeout 180s`；保留服务器独有的 `client_max_body_size 2g`。
+
+### Deployed
+- **0.6.29（含 DeepSeek 思考模式 `reasoning_content` 回填修复）此前未部署到生产**（服务器仍为 0.6.27）。本次已执行 `deploy.ps1` 并验证：服务器 `VERSION=0.6.29`、`_replay_reasoning` 代码就位、`ai-getway.service` active、`localhost:6770` 与 `https://ai-getway.fangna.tech/` 均 200。
+
 ## [0.6.29] - 2026-10-19
 
 ### Fixed
