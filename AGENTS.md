@@ -17,7 +17,7 @@
    - 改了哪些文件、实现了什么功能、为什么改
    - 数据库结构变更时，附表结构说明、表关系、查询方式（参考 0.6.15 的写法）
 3. **完成构建**：确保 `dist/AI Gateway vX.Y.Z.exe` 产物已生成
-4. **自动提交**：`git add` 本次变更文件后 `git commit`，提交信息按仓库风格写清变更内容。**禁止提交**：`config.json`（含 API 密钥，未被 git 追踪，保持不追踪）、`*.db`/`*.db-wal`/`*.db-shm`、`deploy.ps1.bak` 等临时文件
+4. **自动提交并推送**：`git add` 本次变更文件后 `git commit`，提交信息按仓库风格写清变更内容；随后推到两个远端 `git push github master` 和 `git push origin master`（GitHub + Gitee 都要推，曾有只 commit 不 push 的遗漏）。**禁止提交**：`config.json`（含 API 密钥，未被 git 追踪，保持不追踪）、`*.db`/`*.db-wal`/`*.db-shm`、`deploy.ps1.bak` 等临时文件
 5. **自动部署**：运行 `deploy.ps1` 同步代码到服务器并重启服务（见下节「部署」），完成后验证服务器 HTTP 200
 
 版本号规则：patch 位自动 +1（如 0.6.14 → 0.6.15），`VERSION` 只在 `app.py` 维护。
