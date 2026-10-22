@@ -199,17 +199,22 @@ systemctl restart ${APP_NAME}
 systemctl enable --now ${APP_NAME}-watchdog.timer
 
 # 同步 nginx 站点配置（deploy.ps1 以前不覆盖该文件，导致仓库里的 nginx.conf 与线上不一致）
-if [ -f $DEPLOY_PATH/nginx.conf ]; then
-  NGX=/etc/nginx/conf.d/${APP_NAME}.conf
-  cp $NGX $NGX.bak 2>/dev/null || true
-  cp $DEPLOY_PATH/nginx.conf $NGX
-  if nginx -t; then
-    systemctl reload nginx
-    echo 'nginx 配置已同步并 reload'
-    rm -f $NGX.bak
+# 注意：这里是 PowerShell 双引号 here-string，不能用 bash 局部变量（`$VAR 会被 PowerShell 吃掉），
+# 只能用 ${APP_NAME}/${DEPLOY_PATH} 这些 PowerShell 里已定义的变量。
+if [ -f ${DEPLOY_PATH}/nginx.conf ]; then
+  cp /etc/nginx/conf.d/${APP_NAME}.conf /etc/nginx/conf.d/${APP_NAME}.conf.bak 2>/dev/null || true
+  if cp ${DEPLOY_PATH}/nginx.conf /etc/nginx/conf.d/${APP_NAME}.conf; then
+    if nginx -t; then
+      systemctl reload nginx
+      echo 'nginx 配置已同步并 reload'
+      rm -f /etc/nginx/conf.d/${APP_NAME}.conf.bak
+    else
+      cp /etc/nginx/conf.d/${APP_NAME}.conf.bak /etc/nginx/conf.d/${APP_NAME}.conf 2>/dev/null || true
+      systemctl reload nginx
+      echo 'nginx 配置校验失败，已回滚旧配置' >&2
+    fi
   else
-    if [ -f $NGX.bak ]; then cp $NGX.bak $NGX; fi
-    echo 'nginx 配置校验失败，已回滚旧配置' >&2
+    echo 'nginx 配置复制失败，未改动线上配置' >&2
   fi
 fi
 
