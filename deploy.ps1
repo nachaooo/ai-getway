@@ -20,6 +20,9 @@ $SSH_PORT = $config["SSH_PORT"]
 $SSH_KEY = $config["SSH_KEY"]
 $DEPLOY_PATH = $config["DEPLOY_PATH"]
 $WEB_PORT = $config["WEB_PORT"]
+$HEALTH_PORT = $config["HEALTH_PORT"]
+# config.conf 未被 git 追踪，新环境可能没有该键，给默认值兜底
+if (-not $HEALTH_PORT) { $HEALTH_PORT = "6771" }
 $APP_NAME = $config["APP_NAME"]
 $VERSION = $config["VERSION"]
 
@@ -149,8 +152,14 @@ Environment=DB_PATH=$DEPLOY_PATH/data/usage.db
 Environment=ENABLE_DEEPSEEK_TOKENIZER=0
 Environment=THREADS=32
 Environment=PYTHONUNBUFFERED=1
-MemoryHigh=2000M
-MemoryMax=2500M
+Environment=HEALTH_PORT=$HEALTH_PORT
+Environment=MAX_REQUEST_MB=64
+Environment=STATELESS_BODY_MB=4
+Environment=LARGE_BODY_CONCURRENCY=4
+Environment=TOKENIZE_MAX_BYTES=65536
+Environment=CONV_CONTENT_MAX_BYTES=262144
+MemoryHigh=1800M
+MemoryMax=2000M
 MemorySwapMax=512M
 OOMPolicy=stop
 
@@ -158,14 +167,62 @@ OOMPolicy=stop
 WantedBy=multi-user.target
 EOF
 
+# 假死看门狗：进程活着但无响应（GIL 被 C 扩展独占）时 Restart=on-failure 不会触发，
+# 靠定时探活兜底。健康端口是独立线程/独立端口，线程池占满时仍能应答，
+# 只有真假死才失败；连续 3 次失败（约 90s）才重启，避免误杀长流式请求。
+cat > /etc/systemd/system/${APP_NAME}-watchdog.service << 'EOF'
+[Unit]
+Description=AI Gateway health watchdog
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'for i in 1 2 3; do curl -sf -m 10 -o /dev/null http://127.0.0.1:$HEALTH_PORT/ && exit 0; sleep 20; done; echo watchdog: gateway unresponsive, restarting >> /var/log/ai-gateway-watchdog.log; systemctl restart $APP_NAME'
+EOF
+
+cat > /etc/systemd/system/${APP_NAME}-watchdog.timer << 'EOF'
+[Unit]
+Description=Probe AI Gateway health every 30s
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=30
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+EOF
+
 # 重新加载 systemd 并启动服务
 systemctl daemon-reload
 systemctl enable ${APP_NAME}
 systemctl restart ${APP_NAME}
+systemctl enable --now ${APP_NAME}-watchdog.timer
+
+# 同步 nginx 站点配置（deploy.ps1 以前不覆盖该文件，导致仓库里的 nginx.conf 与线上不一致）
+if [ -f $DEPLOY_PATH/nginx.conf ]; then
+  NGX=/etc/nginx/conf.d/${APP_NAME}.conf
+  cp $NGX $NGX.bak 2>/dev/null || true
+  cp $DEPLOY_PATH/nginx.conf $NGX
+  if nginx -t; then
+    systemctl reload nginx
+    echo 'nginx 配置已同步并 reload'
+    rm -f $NGX.bak
+  else
+    if [ -f $NGX.bak ]; then cp $NGX.bak $NGX; fi
+    echo 'nginx 配置校验失败，已回滚旧配置' >&2
+  fi
+fi
 
 # 检查服务状态
 sleep 2
 systemctl status ${APP_NAME} --no-pager
+
+# 健康检查（轻量端点，不查库）
+echo '--- health ---'
+for i in 1 2 3 4 5; do
+  if curl -sf -m 5 http://127.0.0.1:${HEALTH_PORT}/; then echo; break; fi
+  sleep 2
+done
 
 # 内存水位快照：部署后确认服务实际占用
 echo '--- 内存水位 (MB) ---'

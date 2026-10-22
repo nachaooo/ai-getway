@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import json
 import shutil
@@ -13,7 +14,7 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_file
 
-VERSION = "0.6.29"
+VERSION = "0.6.30"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -44,6 +45,36 @@ app = Flask(
 )
 
 PORT = int(_cfg("port", "PORT", 5000))
+
+# ── 请求体体量护栏 ────────────────────────────────────────────
+# 背景（2026-10-22 全站 504）：一个 43MB 请求体把网关打到假死。
+#   ① request.get_json() 把 body 全量解析成 Python 对象，实测放大 5.9 倍
+#      （23MB body → 136MB：原始 bytes + 解析对象 + 重序列化 bytes）；
+#   ② json.dumps() 把解析结果整份重新序列化，json 的 C 编码器全程持有 GIL；
+#   ③ 进程 RSS 撞到 cgroup MemoryHigh 后，分配进入「回收失败→重试」循环，
+#      该线程 100% 内核态空转、零进展，32 个 waitress worker 全部拿不到 GIL，
+#      连 GET / 都无响应 → nginx 180s 后 504。
+# 对策：小请求保持原逻辑（reasoning 回填 + 精确记账 + 对话入库）；
+#      大请求改走「原始字节直通」——不解析、不重序列化、不入库，
+#      token 记账用上游返回的 usage（已实证上游稳定返回，见 CHANGELOG 0.6.30）。
+MAX_REQUEST_MB = int(_cfg("max_request_mb", "MAX_REQUEST_MB", 64))
+STATELESS_BODY_MB = int(_cfg("stateless_body_mb", "STATELESS_BODY_MB", 4))
+TOKENIZE_MAX_BYTES = int(_cfg("tokenize_max_bytes", "TOKENIZE_MAX_BYTES", 64 * 1024))
+CONV_CONTENT_MAX_BYTES = int(_cfg("conv_content_max_bytes", "CONV_CONTENT_MAX_BYTES", 256 * 1024))
+LARGE_BODY_CONCURRENCY = int(_cfg("large_body_concurrency", "LARGE_BODY_CONCURRENCY", 4))
+HEALTH_PORT = int(_cfg("health_port", "HEALTH_PORT", 6771))
+
+app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_MB * 1024 * 1024
+_STATELESS_BODY_BYTES = STATELESS_BODY_MB * 1024 * 1024
+# 大请求并发闸门：把同时在途的大请求数钉死，峰值内存 ≈ N × body 大小
+_large_body_sem = threading.BoundedSemaphore(max(1, LARGE_BODY_CONCURRENCY))
+
+
+@app.errorhandler(413)
+def _payload_too_large(_e):
+    mb = app.config["MAX_CONTENT_LENGTH"] // (1024 * 1024)
+    return jsonify({"error": f"request body too large (limit {mb}MB)"}), 413
+
 
 # 出站代理：解决云服务器 IP 被上游 AI API 封禁问题
 # 支持 http://host:port、socks5://host:port；留空则直连
@@ -361,6 +392,59 @@ def _conv_to_dict_batch(conn, rows):
         items.append(d)
     return items
 
+# ── 入库内容收缩（图片 / base64 / 超长文本）────────────────────
+# 对话库只存「有效对话」文本：内联图片、附件、base64 大块对回看没有价值，
+# 却让 usage.db 无界膨胀（2026-10-22 已达 2.8GB / 磁盘 78%）。
+# 收缩只作用于入库副本，转发给上游的内容完全不受影响。
+_MAX_INLINE_BINARY = 4096
+_BIN_PROMPT = "[binary omitted]"
+_BASE64_BLOB_RE = re.compile(r"[A-Za-z0-9+/]{4096,}={0,2}")
+# 只剔二进制媒体（image/audio/video/application）的内联 data-uri；
+# text/* 的 data-uri 属于文本内容，保留（超长时仍会被截断）。
+_DATA_URI_RE = re.compile(r"data:((?:image|audio|video|application)/[\w.+-]+);base64,[A-Za-z0-9+/=]*")
+_BINARY_KEYS = ("data", "base64", "b64_json")
+
+
+def _shrink_text(text):
+    """入库副本：剔除 data-uri / 裸 base64 大块，超长则截断并标注原始长度。"""
+    if not isinstance(text, str) or not text:
+        return text
+    omitted = 0
+    if len(text) > CONV_CONTENT_MAX_BYTES:
+        omitted += len(text) - CONV_CONTENT_MAX_BYTES
+        text = text[:CONV_CONTENT_MAX_BYTES]
+    before = len(text)
+    text = _DATA_URI_RE.sub(lambda m: f"[{m.group(1)} omitted]", text)
+    text = _BASE64_BLOB_RE.sub("[base64 omitted]", text)
+    omitted += before - len(text)
+    if omitted:
+        text = f"{text}\n...[omitted {omitted} bytes]"
+    return text
+
+
+def _shrink_obj(obj):
+    """递归收缩待入库结构：二进制大字段换占位符，超长文本截断。"""
+    if isinstance(obj, str):
+        return _shrink_text(obj)
+    if isinstance(obj, list):
+        return [_shrink_obj(x) for x in obj]
+    if not isinstance(obj, dict):
+        return obj
+    out = {}
+    for k, v in obj.items():
+        if k in _BINARY_KEYS and isinstance(v, str) and len(v) > _MAX_INLINE_BINARY:
+            out[k] = _BIN_PROMPT
+        elif k == "image_url" and isinstance(v, str) and len(v) > _MAX_INLINE_BINARY:
+            out[k] = _BIN_PROMPT
+        elif k == "image_url" and isinstance(v, dict) and isinstance(v.get("url"), str) and len(v["url"]) > _MAX_INLINE_BINARY:
+            out[k] = {**v, "url": _BIN_PROMPT}
+        elif k == "source" and isinstance(v, dict) and isinstance(v.get("data"), str) and len(v["data"]) > _MAX_INLINE_BINARY:
+            out[k] = {**v, "data": _BIN_PROMPT}
+        else:
+            out[k] = _shrink_obj(v)
+    return out
+
+
 def _msg_content(content):
     """content 归一化为 (value, is_list)，与迁移脚本一致。"""
     if isinstance(content, list):
@@ -413,6 +497,12 @@ def count_tokens(model: str, text: str) -> int:
         tok = get_deepseek_tokenizer()
         if tok:
             return len(tok.encode(text))
+        return max(1, len(text) // 4)
+    # tiktoken 的 BPE 预分词对「超长无空白 run」会退化成 O(n²)：实测连续同字符
+    # 64KB 需 1.5s、256KB 需 45.7s、1MB 约 11 分钟（minified JS / base64 / 长 hash
+    # 都是这种形状）。计数只用于「上游没返回 usage」时兜底，不值得付出分钟级 CPU
+    # 占死 worker 线程，超阈值直接按 4 字节/token 估算。
+    if len(text) > TOKENIZE_MAX_BYTES:
         return max(1, len(text) // 4)
     try:
         import tiktoken
@@ -559,6 +649,8 @@ def _log_conversation(model, provider, endpoint, messages, response, prompt_toke
                 system_prompt = _msg_text(m.get("content"))
             elif role == "user":
                 last_user = _msg_text(m.get("content"))
+        system_prompt = _shrink_text(system_prompt)
+        last_user = _shrink_text(last_user)
         conn = get_conv_db()
         sp_id = _get_or_insert_system_prompt(conn, system_prompt)
         cur = conn.execute(
@@ -566,7 +658,7 @@ def _log_conversation(model, provider, endpoint, messages, response, prompt_toke
             (
                 model, provider, endpoint,
                 sp_id, last_user,
-                response or "",
+                _shrink_text(response or ""),
                 prompt_tokens, completion_tokens, total_tokens, duration_ms,
             ),
         )
@@ -576,8 +668,9 @@ def _log_conversation(model, provider, endpoint, messages, response, prompt_toke
             if not isinstance(m, dict):
                 continue
             role = str(m.get("role", "unknown"))
-            content, is_list = _msg_content(m.get("content"))
+            content, is_list = _msg_content(_shrink_obj(m.get("content")))
             extra = {k: v for k, v in m.items() if k not in ("role", "content")}
+            extra = _shrink_obj(extra) if extra else {}
             extra_str = json.dumps(extra, ensure_ascii=False) if extra else ""
             content_id = _get_or_insert_message_content(conn, content, is_list, extra_str)
             msg_rows.append((conv_id, seq, role, content_id))
@@ -949,68 +1042,239 @@ def _proxy_passthrough(upstream_url, body, model, stream):
     return jsonify(data)
 
 
-@app.route("/v1/chat/completions", methods=["POST"])
-def proxy():
-    body = request.get_json(force=True)
+# ── 大请求体：无状态直通 ──────────────────────────────────────
+# 目标：≥ STATELESS_BODY_MB 的请求不再进入「解析成对象 + 重新序列化」路径。
+# 只做三件事：透传原始字节、从响应里抓 usage 记账、把响应原样流回客户端。
+# 代价：大请求不做 reasoning_content 回填、不入对话库（两者都需要解析后的
+# messages，而那正是把 body 放大 5.9 倍、进而拖死全站的根因）。
+# 正常 opencode 会话请求体 0.4~0.8MB，远低于阈值，行为完全不变。
+_MODEL_RE = re.compile(rb'"model"\s*:\s*"([^"\\]{1,200})"')
+
+
+def _scan_body_meta(raw):
+    """从前 8KB 扫出 model，避免解析整个大 body。
+
+    ai-sdk / opencode 生成的 payload 顶层 model 位于最前面，前缀扫描足够；
+    扫不到就留空，后续用响应里的 model 补。
+    """
+    m = _MODEL_RE.search(raw[:8192])
+    return m.group(1).decode("utf-8", "replace") if m else ""
+
+
+def _upstream_headers_raw(model, raw):
+    """大请求头部构造：规则同 _upstream_headers，但会话 ID 改用 body 头部指纹。"""
+    headers = {"Content-Type": "application/json"}
+    for h in ("Authorization", "User-Agent", "x-opencode-session"):
+        v = request.headers.get(h)
+        if v:
+            headers[h] = v
+    ua = headers.get("User-Agent", "")
+    if not ua or ua.lower().startswith(_GENERIC_UA_PREFIXES):
+        headers["User-Agent"] = f"ai-gateway/{VERSION}"
+    if not headers.get("x-opencode-session"):
+        # 无法解析 messages[0]，改用 body 头部指纹：同一会话历史只追加、不改头部，
+        # 指纹在会话内稳定，仍能满足上游的会话路由与提示缓存。
+        fp = hashlib.sha1(raw[:4096]).hexdigest()
+        headers["x-opencode-session"] = "gw-" + hashlib.sha1(f"{model}|{fp}".encode()).hexdigest()[:16]
+    return headers
+
+
+def _usage_of(chunk):
+    """从单个 chunk 提取 usage，兼容 OpenAI / Responses / Anthropic。"""
+    if not isinstance(chunk, dict):
+        return None
+    if isinstance(chunk.get("usage"), dict):
+        return chunk["usage"]
+    inner = chunk.get("response")
+    if isinstance(inner, dict) and isinstance(inner.get("usage"), dict):
+        return inner["usage"]
+    return None
+
+
+def _proxy_stateless(target_url, raw):
+    """大请求体直通：原始字节发给上游，响应原样流回，仅抓 usage 记账。"""
+    model = _scan_body_meta(raw)
+    headers = _upstream_headers_raw(model, raw)
+    hostname = target_url.replace("https://", "").replace("http://", "").split("/")[0]
+    provider_label = hostname.split(":")[0]
+    path = request.path
+    start_time = datetime.now()
+    state = {"usage": None, "model": model, "out_chars": 0}
+
+    # 并发闸门：把同时在途的大请求数钉死，峰值内存 ≈ N × body 大小。
+    # 只在「超大 body」路径生效，正常请求不受影响。
+    if not _large_body_sem.acquire(timeout=120):
+        return jsonify({"error": "gateway busy: too many large requests in flight, retry later"}), 503
+    released = threading.Event()
+
+    def _release():
+        if not released.is_set():
+            released.set()
+            _large_body_sem.release()
+
+    try:
+        resp = requests.post(target_url, headers=headers, data=raw, stream=True, timeout=300, proxies=PROXIES)
+    except requests.RequestException as e:
+        _release()
+        err = f"UPSTREAM REQUEST FAILED: {type(e).__name__}: {e}"
+        print(f"  {err}")
+        print(f"  TARGET: {target_url}")
+        return jsonify({"error": err}), 502
+    except BaseException:
+        _release()
+        raise
+
+    if not resp.ok:
+        _release()
+        try:
+            err = resp.text[:500] if resp.text else "(empty body)"
+        except Exception:
+            err = "(unreadable body)"
+        print(f"  UPSTREAM {resp.status_code} (stateless, {len(raw)}B body): {err}")
+        return jsonify({"error": err}), resp.status_code
+
+    ctype = resp.headers.get("content-type", "application/json")
+    is_sse = "event-stream" in ctype
+
+    def _capture(line):
+        if not line or not line.startswith("data:"):
+            return
+        payload = line[5:].strip()
+        if not payload or payload == "[DONE]":
+            return
+        try:
+            chunk = json.loads(payload)
+        except ValueError:
+            return
+        if isinstance(chunk, dict) and chunk.get("model") and not state["model"]:
+            state["model"] = chunk["model"]
+        usage = _usage_of(chunk)
+        if usage:
+            state["usage"] = usage
+
+    def generate():
+        try:
+            if is_sse:
+                for line in resp.iter_lines(decode_unicode=True):
+                    line = line or ""
+                    state["out_chars"] += len(line)
+                    _capture(line)
+                    yield line + "\n"
+            else:
+                data = resp.content
+                try:
+                    obj = json.loads(data)
+                    if isinstance(obj, dict):
+                        if obj.get("model"):
+                            state["model"] = obj["model"]
+                        state["usage"] = _usage_of(obj) or state["usage"]
+                        state["out_chars"] += len(data)
+                except ValueError:
+                    pass
+                yield data
+        finally:
+            duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+            usage = state["usage"] or {}
+            if usage:
+                pt = usage.get("prompt_tokens") or usage.get("input_tokens") or 0
+                ct = usage.get("completion_tokens") or usage.get("output_tokens") or 0
+                print(f"  LOG: upstream usage: {json.dumps(usage, ensure_ascii=False)}")
+            else:
+                # 上游没给 usage 时不再伪造 prompt 数，只在日志里显式暴露，便于发现契约变化
+                pt, ct = 0, state["out_chars"] // 4
+                print(f"  STATELESS WARN: no usage in upstream response ({len(raw)}B body)")
+            cached = _extract_cached_tokens(usage)
+            reasoning = _extract_reasoning_tokens(usage)
+            print(f"  STATELESS: body={len(raw)}B stream={is_sse} model={state['model'] or '(unknown)'}")
+            _log_usage(state["model"], provider_label, pt, ct, pt + ct, path, duration_ms, None, cached, reasoning)
+            try:
+                resp.close()
+            except Exception:
+                pass
+            # 必须在生成器 finally 里放行：call_on_close 在部分运行环境/测试客户端下
+            # 不触发，只靠它会漏放信号量，几次大请求后全部 503。
+            _release()
+
+    response = Response(stream_with_context(generate()), content_type=ctype)
+    response.call_on_close(_release)
+    return response
+
+
+def _dispatch_proxy(by_suffix=""):
+    """两个代理入口的公共逻辑。
+
+    小请求走原路径（解析 → 清理/replay → 精确记账 → 对话入库）；
+    大请求走无状态直通。by_suffix 仅在通过 ?by= 指定上游时追加
+    （/v1/chat/completions 需要补 /chat/completions，/v1 原样透传）。
+    """
+    raw = request.get_data()
+    upstream_url = request.args.get("by")
+    large = len(raw) >= _STATELESS_BODY_BYTES
+
+    if large:
+        model = _scan_body_meta(raw)
+        if upstream_url:
+            target = upstream_url.rstrip("/") + by_suffix if by_suffix else upstream_url
+        else:
+            if not model:
+                return jsonify({"error": "model is required when ?by is not specified"}), 400
+            conn = get_db()
+            row = conn.execute(
+                "SELECT api_base, api_key FROM models WHERE (model = ? OR is_default = 1) ORDER BY is_default DESC LIMIT 1",
+                (model,)
+            ).fetchone()
+            conn.close()
+            if not row:
+                return jsonify({"error": f"No model config found for '{model}'. Use ?by=<upstream_url> or configure models."}), 400
+            target = row["api_base"].rstrip("/")
+            if row["api_key"]:
+                request.headers = {**request.headers, "Authorization": f"Bearer {row['api_key']}"}
+        return _proxy_stateless(target, raw)
+
+    try:
+        body = json.loads(raw)
+    except (ValueError, UnicodeDecodeError) as e:
+        return jsonify({"error": f"invalid JSON body: {e}"}), 400
+    if not isinstance(body, dict):
+        return jsonify({"error": "request body must be a JSON object"}), 400
     model = body.get("model", "")
     stream = body.get("stream", False)
 
-    upstream_url = request.args.get("by")
     if upstream_url:
-        return _proxy_passthrough(upstream_url.rstrip("/") + "/chat/completions", body, model, stream)
-    
+        target = upstream_url.rstrip("/") + by_suffix if by_suffix else upstream_url
+        return _proxy_passthrough(target, body, model, stream)
+
     if not model:
         return jsonify({"error": "model is required when ?by is not specified"}), 400
-    
+
     conn = get_db()
     row = conn.execute(
         "SELECT api_base, api_key FROM models WHERE (model = ? OR is_default = 1) ORDER BY is_default DESC LIMIT 1",
         (model,)
     ).fetchone()
     conn.close()
-    
+
     if not row:
         return jsonify({"error": f"No model config found for '{model}'. Use ?by=<upstream_url> or configure models."}), 400
-    
+
     api_base = row["api_base"].rstrip("/")
     api_key = row["api_key"]
-    
+
     if api_key:
         request.headers = {**request.headers, "Authorization": f"Bearer {api_key}"}
-    
+
     return _proxy_passthrough(api_base, body, model, stream)
+
+
+@app.route("/v1/chat/completions", methods=["POST"])
+def proxy():
+    return _dispatch_proxy("/chat/completions")
 
 
 @app.route("/v1", methods=["POST"])
 def proxy_v1():
-    upstream_url = request.args.get("by")
-    body = request.get_json(force=True)
-    model = body.get("model", "")
-    stream = body.get("stream", False)
+    return _dispatch_proxy("")
 
-    if upstream_url:
-        return _proxy_passthrough(upstream_url, body, model, stream)
-    
-    if not model:
-        return jsonify({"error": "model is required when ?by is not specified"}), 400
-    
-    conn = get_db()
-    row = conn.execute(
-        "SELECT api_base, api_key FROM models WHERE (model = ? OR is_default = 1) ORDER BY is_default DESC LIMIT 1",
-        (model,)
-    ).fetchone()
-    conn.close()
-    
-    if not row:
-        return jsonify({"error": f"No model config found for '{model}'. Use ?by=<upstream_url> or configure models."}), 400
-    
-    api_base = row["api_base"].rstrip("/")
-    api_key = row["api_key"]
-    
-    if api_key:
-        request.headers = {**request.headers, "Authorization": f"Bearer {api_key}"}
-    
-    return _proxy_passthrough(api_base, body, model, stream)
 
 
 @app.route("/v1/models", methods=["GET"])
@@ -1387,6 +1651,17 @@ def landing():
     return render_template("index.html")
 
 
+@app.route("/api/health")
+def api_health():
+    """轻量健康检查：不查库、不解析 body，供部署校验与人工探活使用。"""
+    return jsonify({
+        "ok": True,
+        "version": VERSION,
+        "threads": threading.active_count(),
+        "stateless_threshold_mb": STATELESS_BODY_MB,
+    })
+
+
 @app.route("/favicon.ico")
 def favicon():
     return app.send_static_file("icon.ico")
@@ -1696,6 +1971,44 @@ def api_insights():
 init_db()
 
 
+def _start_health_server(port):
+    """独立端口的极简健康检查（仅监听 127.0.0.1）。
+
+    单独线程 + 独立端口，不受 waitress 线程池占满影响：线程池全忙（长流式请求）
+    时仍能应答；只有进程真正假死（GIL 被 C 扩展独占）才不应答。watchdog 因此
+    能区分「忙」和「死」，不会误杀正在跑长请求的进程。
+    """
+    if not port:
+        return
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class _Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self):
+            body = b'{"ok":true}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    class _Server(ThreadingHTTPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+
+    try:
+        srv = _Server(("127.0.0.1", port), _Handler)
+    except OSError as e:
+        print(f"  警告：健康检查端口 {port} 启动失败：{e}")
+        return
+    threading.Thread(target=srv.serve_forever, name="health", daemon=True).start()
+    print(f"  health check on http://127.0.0.1:{port}/")
+
+
 def _serve():
     """启动 HTTP 服务。
 
@@ -1703,6 +2016,7 @@ def _serve():
     未安装时回落到 Flask 内置开发服务器，仅供本地调试。
     Flask 开发服务器每请求新建线程且无上限，并发流式请求下内存会失控，线上不可用。
     """
+    _start_health_server(HEALTH_PORT)
     threads = int(os.environ.get("THREADS", "32"))
     try:
         from waitress import serve

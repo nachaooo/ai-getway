@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.6.30] - 2026-10-22
+
+### Fixed
+- **43MB 请求体把网关打到全站 504（进程假死 30+ 分钟）**：2026-10-22 10:07~10:17 `https://ai-getway.fangna.tech/` 持续 `504 Gateway Time-out`，连 `GET /`、`/favicon.ico` 都超时，而 systemd 显示 `active` / `NRestarts=0`（进程活着但完全无响应）。逐层取证定位到完整链条：
+  - **触发器**：opencode 发来 `Content-Length: 43936558`（43.9MB）的请求体；同客户端正常请求仅 439KB~788KB，属 100 倍异常值。
+  - **内存放大 5.9 倍**：`request.get_json()` 把 body 全量解析成 Python 对象（实测 23.1MB body → 解析对象 +66.7MB），随后 `json.dumps(body).encode()` 又整份重新序列化（+46.2MB）。**同一时刻内存里有 4 份 body**：Werkzeug 缓存的原始 bytes、解析出的 dict、重序列化的 bytes、urllib3 发送缓冲 → 单请求 ≈ 250MB；`THREADS=32` 时理论峰值 4.3GB，而物理内存仅 3655MB、cgroup 上限 2000MB。
+  - **这些副本不会「转发后立即释放」**：`_handle_stream(target_url, headers, body_data, ..., raw_body, ...)` 把 dict 与 bytes 都作为函数参数传入，帧在整个流式响应期间都活着。
+  - **致命点：GIL**。`json` 的 C 编码器全程持有 GIL，而 waitress 是单进程多线程 —— py-spy 实测 30/32 worker 卡在 `wait (threading.py:327)`（内核 `wchan=futex_wait_queue`，即在等 GIL），仅 waitress-6 持 GIL 停在 `app.py:904` 的 `json.dumps`。
+  - **卡死而非变慢**：该线程 10 秒内 `stime +997 tick`（100% 内核态）、`utime` 零增长、RSS 不增长、`minflt` 仅 +1。此时进程 `anon` 已达 2.08GB，`memory.events high` 10 秒内 11946→11966（`MemoryHigh=2000M` 持续限流），大块内存分配进入「回收失败→重试」循环，原地空转永不返回。
+  - **不自愈**：`Restart=on-failure` 对「进程活着但无响应」无效，故障持续到人工重启。
+  - 修复：**按 body 大小分层**。`< STATELESS_BODY_MB`（默认 4MB）走原逻辑，行为完全不变（reasoning 回填、精确记账、对话入库）；`>= 4MB` 改走 `_proxy_stateless()` **原始字节直通** —— 不解析、不重序列化、不入对话库，只透传 raw bytes 并从上游响应里抓 `usage` 记账。峰值内存从 ≈250MB 降到 ≈1 份 body。
+  - 前提已实证：上游稳定返回 `usage`（10-21 全天 3548 请求 → 3398 条 `upstream usage`，`fallback count` 0 次；DB 内 `cached_tokens>0` 占比 deepseek 98.2% / mimo 96.7% / minimax 100%），因此记账不需要解析请求体。差的 150 条为 502/上游报错，本无 usage。
+- **tiktoken 对「超长无空白 run」退化成 O(n²)**：`count_tokens` 直接用 `tiktoken.encode(text)`，实测连续同字符 16KB→0.094s、64KB→1.510s、**256KB→45.733s**、1MB≈11 分钟（minified JS / base64 / 长 hash / data URI 都是这种形状；有词边界的普通文本是线性的，4MB 仅 0.265s）。虽然 tiktoken 会释放 GIL（心跳线程实测 8/8 正常），但会把 worker 线程占死数分钟，线程池耗尽后同样引发 504。修复：单段文本超过 `TOKENIZE_MAX_BYTES`（默认 64KB）直接按 `len//4` 估算，不再进 tiktoken。计数只用于「上游没返回 usage」时兜底，精度损失可接受。
+- **`/v1` 与 `/v1/chat/completions` 逻辑重复**：抽出 `_dispatch_proxy(by_suffix)`，两个入口共用；`?by=` 时的路径拼接规则与原实现逐字保持（`/v1` 原样透传，`/v1/chat/completions` 补 `/chat/completions`）。
+- **非法 JSON body 报错不明确**：原先依赖 `get_json(force=True)` 抛 Werkzeug 400，现显式 `json.loads` 并返回 `{"error": "invalid JSON body: ..."}`；非 object 顶层返回 400。
+- **托盘/worker 模式一直用 Flask 开发服务器**：`main.py` 的 `--worker` 分支直接调 `app.app.run(host='0.0.0.0', port=app.PORT)`，**绕过了 `app._serve()`** —— 0.6.28 引入的 waitress 线程池、以及本次新增的独立健康端口在打包 exe 里都没生效（每请求新建线程、并发无上限）。改为调用 `app._serve()`，桌面端与服务端行为一致。服务器部署走 `python3 app.py` 直接进 `_serve()`，不受影响。
+
+### Added
+- **请求体硬上限**：`MAX_CONTENT_LENGTH`（`MAX_REQUEST_MB`，默认 64MB）+ 413 JSON 处理器；`nginx.conf` 的 `client_max_body_size` 由 `2g` 收紧到 `64m` 与之对齐。
+- **大请求并发闸门**：`_large_body_sem`（`LARGE_BODY_CONCURRENCY`，默认 4），把同时在途的大请求数钉死，峰值内存 ≈ N × body 大小；等待超 120s 返回 503。信号量在生成器 `finally` 里释放（`call_on_close` 在部分环境/测试客户端不触发，只靠它会漏放）。
+- **对话入库内容收缩**：`_shrink_text()` / `_shrink_obj()` 在写库前剔除内联图片（`data:image|audio|video|application/*;base64,...` → `[image/png omitted]` 等）、裸 base64 大块（≥4096 字符）、`data`/`base64`/`b64_json`/`image_url`/`source.data` 等二进制字段，单条内容超过 `CONV_CONTENT_MAX_BYTES`（默认 256KB）截断并标注原始长度。**只影响入库副本，转发给上游的内容完全不受影响**。用于止住 `usage.db` 膨胀（已 2.8GB，磁盘 60G 已用 78%）。
+- **`GET /api/health`**：轻量健康检查（不查库、不解析 body），返回 `{ok, version, threads, stateless_threshold_mb}`。
+- **独立健康端口 `HEALTH_PORT`（默认 6771，仅 127.0.0.1）**：单独线程 + 独立端口，不受 waitress 线程池占满影响 —— 线程池全忙（长流式请求）时仍能应答，只有进程真正假死（GIL 被独占）才不应答。`HEALTH_PORT=0` 可关闭。
+- **systemd 假死看门狗**：`ai-getway-watchdog.service` + `.timer`，每 30s 探活，连续 3 次失败（约 90s）才 `systemctl restart`，避免误杀长流式请求。把「30 分钟人工介入」压缩到「约 1.5 分钟自动恢复」。
+- **`deploy.ps1` 自动同步 `nginx.conf`**：此前该文件不在同步范围，导致仓库与线上长期不一致。现在部署时 `cp` 到 `/etc/nginx/conf.d/<app>.conf`，`nginx -t` 通过才 reload，失败自动回滚旧配置。
+- **`config.conf` 新增 `HEALTH_PORT=6771`**。
+
+### Changed
+- **systemd 内存水位收紧**：`MemoryHigh` 2000M→1800M、`MemoryMax` 2500M→2000M。原配置在 3.6GB 机器上既容易先进入「限流空转」而非快速失败，又曾因整机内存打满触发全机 OOM（0.6.28）。配合体量上限后正常占用仅 50~150MB，该限额只作为回归护栏。
+- **`deploy.ps1` systemd 单元新增环境变量**：`HEALTH_PORT`、`MAX_REQUEST_MB=64`、`STATELESS_BODY_MB=4`、`LARGE_BODY_CONCURRENCY=4`、`TOKENIZE_MAX_BYTES=65536`、`CONV_CONTENT_MAX_BYTES=262144`；部署末尾改为探测独立健康端口。
+
+### Tests
+- 新增 `TestOversizedRequestGuards`（14 用例）：tiktoken 跳过阈值 / 小文本仍走 tiktoken、data-uri 与裸 base64 剔除、超大文本截断、content list 图片与文件块置换、413 上限、**大 body 原样透传（断言上游收到的字节与客户端发出的完全一致）**、大 body 不写对话库、usage 取自上游响应（含 cached/reasoning）、并发闸门释放、小 body 仍做 reasoning 回填；`TestHealthEndpoint`。
+- 全部 63 个单测通过。
+
+### E2E 实测
+- 假上游 + 网关子进程，POST **40MB** body（内含 20 个 2MB 连续无空白 run）：`status=200`、**0.14s 完成**、峰值 RSS **97MB（增量仅 46MB）**、并发探活 `fail=0 / worst=4ms`、`usage_logs` 正确记录 `p=180000 c=42 cached=179000 reasoning=7`、`conversations` 未写入。
+- 旧实现下同一请求会走 tiktoken O(n²) + `json.dumps` 持 GIL，必现假死。
+
 ## [Unreleased]
 
 ### Changed

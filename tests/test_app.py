@@ -579,5 +579,220 @@ class TestMergeConvDb(unittest.TestCase):
             self.assertEqual(n, 1)
 
 
+class TestOversizedRequestGuards(unittest.TestCase):
+    """2026-10-22 全站 504 的回归防线。
+
+    事故链路：43MB body → request.get_json 全量解析（放大 5.9 倍）→ json.dumps
+    整份重序列化（C 编码器持 GIL）→ 撞 cgroup MemoryHigh 后分配重试循环空转
+    → 32 个 waitress worker 全部饿死 → 连 GET / 都 504。
+    """
+
+    def setUp(self):
+        self.client = app.app.test_client()
+        self._orig_stateless = app._STATELESS_BODY_BYTES
+        self._orig_max = app.app.config["MAX_CONTENT_LENGTH"]
+
+    def tearDown(self):
+        app._STATELESS_BODY_BYTES = self._orig_stateless
+        app.app.config["MAX_CONTENT_LENGTH"] = self._orig_max
+
+    # ── tiktoken O(n²) 地雷 ──────────────────────────────
+
+    def test_count_tokens_large_text_skips_tiktoken(self):
+        """超长文本不走 tiktoken（256KB 连续同字符实测要 45s）"""
+        text = "x" * (app.TOKENIZE_MAX_BYTES + 1)
+        with patch("tiktoken.get_encoding") as mock_enc:
+            n = app.count_tokens("mimo-v2.6-flash", text)
+            mock_enc.assert_not_called()
+        self.assertEqual(n, len(text) // 4)
+
+    def test_count_tokens_small_text_still_tiktoken(self):
+        """小文本仍走 tiktoken，保证记账精度"""
+        text = "hello world " * 10
+        self.assertGreater(app.count_tokens("gpt-4", text), 10)
+
+    # ── 入库内容收缩 ──────────────────────────────────────
+
+    def test_shrink_text_strips_data_uri(self):
+        """内联图片（data-uri）不入库，保留媒体类型提示"""
+        raw = "看图：" + "data:image/png;base64," + "A" * 5000 + " 完毕"
+        out = app._shrink_text(raw)
+        self.assertIn("[image/png omitted]", out)
+        self.assertNotIn("base64,", out)
+        self.assertIn("完毕", out)
+
+    def test_shrink_text_strips_bare_base64_blob(self):
+        """裸 base64 大块（≥4KB）不入库"""
+        raw = "结果 " + "QUJD" * 2000 + " 结束"
+        out = app._shrink_text(raw)
+        self.assertIn("[base64 omitted]", out)
+        self.assertLess(len(out), len(raw))
+
+    def test_shrink_text_truncates_oversized(self):
+        """超长文本截断并标注原始长度"""
+        raw = "中" * (app.CONV_CONTENT_MAX_BYTES + 5000)
+        out = app._shrink_text(raw)
+        self.assertLess(len(out), app.CONV_CONTENT_MAX_BYTES + 200)
+        self.assertIn("omitted", out)
+
+    def test_shrink_obj_strips_image_parts(self):
+        """content list 里的 image/file 二进制块换成占位符，文本保留"""
+        content = [
+            {"type": "text", "text": "这是问题"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "B" * 9000}},
+            {"type": "file", "data": "C" * 9000, "filename": "a.pdf"},
+        ]
+        out = app._shrink_obj(content)
+        self.assertEqual(out[0]["text"], "这是问题")
+        self.assertEqual(out[1]["image_url"]["url"], app._BIN_PROMPT)
+        self.assertEqual(out[2]["data"], app._BIN_PROMPT)
+        self.assertEqual(out[2]["filename"], "a.pdf")
+
+    def test_shrink_keeps_small_text_intact(self):
+        """小文本与 text/* data-uri 原样保留，不做无谓裁剪"""
+        content = [
+            {"type": "text", "text": "短文本"},
+            {"type": "text", "text": "data:text/plain;base64,SGVsbG8="},
+        ]
+        out = app._shrink_obj(content)
+        self.assertEqual(out[0]["text"], "短文本")
+        self.assertEqual(out[1]["text"], "data:text/plain;base64,SGVsbG8=")
+
+    def test_shrink_strips_small_image_data_uri(self):
+        """即使很小的图片 data-uri 也不入库（图片一律不存）"""
+        out = app._shrink_obj([{"type": "image_url",
+                                "image_url": {"url": "data:image/png;base64," + "D" * 100}}])
+        self.assertIn("[image/png omitted]", out[0]["image_url"]["url"])
+        self.assertNotIn("DDDD", out[0]["image_url"]["url"])
+
+    # ── 请求体硬上限 ──────────────────────────────────────
+
+    def test_413_when_body_exceeds_limit(self):
+        """超过 MAX_CONTENT_LENGTH 返回 413（不再进入解析路径）"""
+        app.app.config["MAX_CONTENT_LENGTH"] = 1024
+        resp = self.client.post("/v1?by=https://api.test.com/v1",
+                                data=b"{" + b" " * 4096 + b"}", content_type="application/json")
+        self.assertEqual(resp.status_code, 413)
+        self.assertIn("too large", json.loads(resp.data)["error"])
+
+    # ── 无状态直通 ────────────────────────────────────────
+
+    def _sse_resp(self, lines):
+        m = MagicMock()
+        m.ok = True
+        m.headers = {"content-type": "text/event-stream"}
+        m.iter_lines.return_value = iter(lines)
+        return m
+
+    def test_large_body_forwarded_verbatim(self):
+        """大 body 原样透传：上游收到的字节与客户端发出的完全一致（不重新序列化）"""
+        app._STATELESS_BODY_BYTES = 256
+        payload = json.dumps({"model": "mimo-v2.6-flash", "messages": [
+            {"role": "user", "content": "x" * 1000}]}, ensure_ascii=False).encode("utf-8")
+        self.assertGreater(len(payload), 256)
+
+        with patch("app.requests.post") as mock_post:
+            mock_post.return_value = self._sse_resp([
+                'data: {"model":"mimo-v2.6-flash","usage":{"prompt_tokens":10,"completion_tokens":5}}',
+                "data: [DONE]",
+            ])
+            resp = self.client.post("/v1?by=https://api.test.com/zen/go/v1/chat/completions",
+                                    data=payload, content_type="application/json")
+            self.assertEqual(resp.status_code, 200)
+            resp.get_data()
+
+        sent = mock_post.call_args.kwargs["data"]
+        self.assertEqual(sent, payload, "上游收到的必须是原始字节，不能被 json.dumps 重新序列化")
+
+    def test_large_body_skips_reasoning_replay_and_conversation_log(self):
+        """大 body 不解析：不写 conversations 表（只记 usage）"""
+        app._STATELESS_BODY_BYTES = 256
+        payload = json.dumps({"model": "mimo-v2.6-flash", "messages": [
+            {"role": "assistant", "content": "y" * 1000, "tool_calls": [{"id": "t1"}]}]}).encode()
+
+        conn = app.get_conv_db()
+        before = conn.execute("SELECT COUNT(*) n FROM conversations").fetchone()["n"]
+        conn.close()
+
+        with patch("app.requests.post") as mock_post:
+            mock_post.return_value = self._sse_resp([
+                'data: {"model":"mimo-v2.6-flash","usage":{"prompt_tokens":7,"completion_tokens":3}}'])
+            resp = self.client.post("/v1?by=https://api.test.com/v1", data=payload,
+                                    content_type="application/json")
+            resp.get_data()
+
+        conn = app.get_conv_db()
+        after = conn.execute("SELECT COUNT(*) n FROM conversations").fetchone()["n"]
+        conn.close()
+        self.assertEqual(before, after, "大 body 不应写对话库")
+
+    def test_large_body_usage_logged_from_response(self):
+        """大 body 的 token 记账取自上游响应里的 usage"""
+        app._STATELESS_BODY_BYTES = 256
+        payload = json.dumps({"model": "mimo-v2.6-flash", "messages": [
+            {"role": "user", "content": "z" * 1000}]}).encode()
+
+        with patch("app.requests.post") as mock_post:
+            mock_post.return_value = self._sse_resp([
+                'data: {"usage":{"prompt_tokens":1234,"completion_tokens":56,'
+                '"prompt_tokens_details":{"cached_tokens":1200},'
+                '"completion_tokens_details":{"reasoning_tokens":6}}}'])
+            self.client.post("/v1?by=https://api.test.com/v1", data=payload,
+                             content_type="application/json").get_data()
+
+        conn = app.get_db()
+        row = conn.execute("SELECT * FROM usage_logs ORDER BY id DESC LIMIT 1").fetchone()
+        conn.close()
+        self.assertEqual(row["model"], "mimo-v2.6-flash")
+        self.assertEqual(row["prompt_tokens"], 1234)
+        self.assertEqual(row["completion_tokens"], 56)
+        self.assertEqual(row["cached_tokens"], 1200)
+        self.assertEqual(row["reasoning_tokens"], 6)
+
+    def test_large_body_releases_concurrency_slot(self):
+        """大请求结束后释放闸门，不会几次之后全部 503"""
+        app._STATELESS_BODY_BYTES = 256
+        payload = json.dumps({"model": "m", "messages": [{"role": "user", "content": "q" * 800}]}).encode()
+        with patch("app.requests.post") as mock_post:
+            mock_post.return_value = self._sse_resp(['data: {"usage":{"prompt_tokens":1,"completion_tokens":1}}'])
+            for _ in range(app.LARGE_BODY_CONCURRENCY + 3):
+                resp = self.client.post("/v1?by=https://api.test.com/v1", data=payload,
+                                        content_type="application/json")
+                resp.get_data()
+                self.assertEqual(resp.status_code, 200)
+
+    def test_small_body_still_full_path_and_replay(self):
+        """小 body 行为不变：reasoning_content 仍会回填"""
+        app._STATELESS_BODY_BYTES = 10 * 1024 * 1024
+        app._reasoning_by_toolcall.clear()
+        app._reasoning_cache_put(["call_x"], "prev", "thinking-abc")
+        body = {"model": "deepseek-v4.1-flash", "stream": False,
+                "tools": [{"type": "function", "function": {"name": "f"}}],
+                "messages": [{"role": "assistant", "content": "prev", "tool_calls": [{"id": "call_x"}]}]}
+
+        with patch("app.requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.ok = True
+            mock_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}], "usage": {}}
+            mock_post.return_value = mock_resp
+            resp = self.client.post("/v1?by=https://api.test.com/v1", json=body)
+            self.assertEqual(resp.status_code, 200)
+
+        sent = json.loads(mock_post.call_args.kwargs["data"])
+        self.assertEqual(sent["messages"][0]["reasoning_content"], "thinking-abc")
+
+
+class TestHealthEndpoint(unittest.TestCase):
+    def setUp(self):
+        self.client = app.app.test_client()
+
+    def test_health_ok(self):
+        resp = self.client.get("/api/health")
+        self.assertEqual(resp.status_code, 200)
+        data = json.loads(resp.data)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["version"], app.VERSION)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,7 +10,10 @@ if getattr(sys, 'frozen', False):
 if '--worker' in sys.argv:
     import app
     print(f"AI Gateway worker running on http://0.0.0.0:{app.PORT}")
-    app.app.run(host='0.0.0.0', port=app.PORT)
+    # 必须走 _serve()：只有它才会启用 waitress 线程池与独立健康端口。
+    # 直接 app.app.run() 会用 Flask 开发服务器——每请求新建线程、并发无上限，
+    # 大请求下内存与线程数双双失控，且 systemd/托盘看门狗探不到健康端口。
+    app._serve()
     sys.exit(0)
 
 # ── tray mode ─────────────────────────────────────────────────
