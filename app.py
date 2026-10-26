@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_file
 
-VERSION = "0.6.30"
+VERSION = "0.6.31"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -702,6 +702,41 @@ def _extract_input_messages(input_data):
     return messages
 
 
+def _iter_sse_raw_lines(resp, chunk_size=8192):
+    """按 b"\\n" 切分上游 SSE 的原始字节行，保留行尾换行。
+
+    不能用 ``requests.iter_lines(decode_unicode=True)``：
+    1) 上游 ``Content-Type: text/event-stream`` 不带 charset 时，requests 对
+       ``text/*`` 默认 ISO-8859-1，中文 UTF-8 字节会变成 mojibake；
+    2) 它内部用 ``str.splitlines()``，会把 U+0085 / U+2028 也当换行。很多汉字
+       的 UTF-8 中间字节是 0x85（如 先 = E5 85 88、全 = E5 85 A8），按 Latin-1
+       解码后就成了 U+0085，一条 JSON 会被从字符串中间劈开，客户端报
+       ``Unterminated string``。
+
+    这里只认 b"\\n"，字节原样返回，由调用方决定是否解码。
+    """
+    buf = b""
+    for chunk in resp.iter_content(chunk_size=chunk_size, decode_unicode=False):
+        if not chunk:
+            continue
+        buf += chunk
+        while True:
+            idx = buf.find(b"\n")
+            if idx < 0:
+                break
+            line = buf[:idx + 1]
+            buf = buf[idx + 1:]
+            yield line
+    if buf:
+        yield buf
+
+
+def _iter_sse_text_lines(resp, chunk_size=8192):
+    """与 ``_iter_sse_raw_lines`` 相同的行边界，逐行按 UTF-8 解码。"""
+    for raw in _iter_sse_raw_lines(resp, chunk_size=chunk_size):
+        yield raw.rstrip(b"\r\n").decode("utf-8", "replace")
+
+
 def _handle_stream(target_url, headers, body_data, model, provider_label, prompt_tokens, raw_body=None, messages=None, is_responses=False):
     try:
         if raw_body:
@@ -733,10 +768,9 @@ def _handle_stream(target_url, headers, body_data, model, provider_label, prompt
 
     def generate():
         nonlocal complete_content, usage_data, reasoning_acc, pure_content
-        resp.encoding = "utf-8"
         buf = []
         try:
-            for raw_line in resp.iter_lines(decode_unicode=True):
+            for raw_line in _iter_sse_text_lines(resp):
                 if raw_line == "":
                     if not buf:
                         continue
@@ -827,7 +861,10 @@ def _handle_stream(target_url, headers, body_data, model, provider_label, prompt
         conv_id = _log_conversation(model, provider_label, path, messages, complete_content, pt, ct, pt + ct, duration_ms)
         _log_usage(model, provider_label, pt, ct, pt + ct, path, duration_ms, conv_id, cached, reasoning)
 
-    response = Response(stream_with_context(generate()), content_type=resp.headers.get("content-type", "text/event-stream"))
+    ctype = resp.headers.get("content-type", "text/event-stream")
+    if "event-stream" in ctype.lower() and "charset=" not in ctype.lower():
+        ctype += "; charset=utf-8"
+    response = Response(stream_with_context(generate()), content_type=ctype)
     response.call_on_close(do_log)
     return response
 
@@ -1135,6 +1172,8 @@ def _proxy_stateless(target_url, raw):
 
     ctype = resp.headers.get("content-type", "application/json")
     is_sse = "event-stream" in ctype
+    if is_sse and "charset=" not in ctype.lower():
+        ctype += "; charset=utf-8"
 
     def _capture(line):
         if not line or not line.startswith("data:"):
@@ -1155,11 +1194,12 @@ def _proxy_stateless(target_url, raw):
     def generate():
         try:
             if is_sse:
-                for line in resp.iter_lines(decode_unicode=True):
-                    line = line or ""
-                    state["out_chars"] += len(line)
-                    _capture(line)
-                    yield line + "\n"
+                # 原始字节直通：不解码、不重编码、不按 str.splitlines() 分行。
+                # 只把完整行解码一份给 _capture() 抓 usage。
+                for raw_line in _iter_sse_raw_lines(resp):
+                    state["out_chars"] += len(raw_line)
+                    _capture(raw_line.rstrip(b"\r\n").decode("utf-8", "replace"))
+                    yield raw_line
             else:
                 data = resp.content
                 try:

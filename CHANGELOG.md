@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.31] - 2026-10-26
+
+### Fixed
+- **大请求体 SSE 中文乱码 + `JSON parse error: Unterminated string`**：opencode 大会话（2095 条消息、约 29MB 历史，请求体 ≥4MB）走 `_proxy_stateless()` 时，中文 reasoning 全部变 mojibake，并随机中断为 `AI_JSONParseError: JSON parsing failed ... Unterminated string`。
+  - **根因链**：`_proxy_stateless` 用 `resp.iter_lines(decode_unicode=True)` 但没有设置 `resp.encoding`；上游返回 `Content-Type: text/event-stream`（无 charset），`requests` 对 `text/*` 默认 **ISO-8859-1**。UTF-8 中文被按 Latin-1 解码（`继续` → `ç»§ç»­`）；更关键的是汉字 UTF-8 中间字节 `0x85`（如 `先` = `E5 85 88`、`全` = `E5 85 A8`）解码成 `U+0085`，而 `str.splitlines()` 把它当换行符，把一条 SSE JSON 从字符串中间劈开，客户端收到半截 `data:` 后 `JSON.parse` 报 `Unterminated string`。
+  - **为什么只有大会话出错**：<4MB 的请求走 `_handle_stream()`，那里显式设了 `resp.encoding = "utf-8"`；≥4MB 才走 0.6.30 新增的无状态直通路径，遗漏了同一设置。
+  - **修复**：新增 `_iter_sse_raw_lines()` / `_iter_sse_text_lines()`，只按 `b"\n"` 切分 SSE 行（不经 `requests.iter_lines` / `str.splitlines()`）；`_proxy_stateless()` 改为**原始字节直通**（`iter_content` 原样 `yield`，不解码、不重编码，仅把完整行按 UTF-8 解码一份给 usage 抓取）；`_handle_stream()` 同样改用字节分行；两条路径的 SSE 响应补 `charset=utf-8`。
+  - 涉及文件：`app.py`（`_iter_sse_raw_lines`、`_iter_sse_text_lines`、`_handle_stream`、`_proxy_stateless`）、`tests/test_app.py`。
+### Tests
+- 新增 3 个回归用例：大 body 的 `0x85` 不再劈行且下游字节与上游完全一致、JSON 字符串内的 `U+2028` 不被当 SSE 行边界、小 body 路径同样保持完整 UTF-8；全部 66 个单测通过。
+
 ## [0.6.30] - 2026-10-22
 
 ### Fixed

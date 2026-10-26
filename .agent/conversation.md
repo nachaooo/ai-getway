@@ -1,6 +1,6 @@
 # AI Gateway - 会话记忆
 
-更新时间：2026-10-22
+更新时间：2026-10-26
 
 ## 项目约定
 - 版本号只在 `app.py` 的 `VERSION = "x.y.z"` 维护，构建时 `scripts/bump_version.py` 自动升 patch
@@ -19,6 +19,7 @@
 - **PowerShell 双引号 here-string 会静默清空未定义的 `$var`**：`deploy.ps1` 里 `$remoteScript = @"..."@` 中的 bash 局部变量（如 `$NGX`）会被 PowerShell 当成空串替换，命令变成 `cp /etc/nginx/conf.d/.conf`，且不报错。只能写 PowerShell 里已定义的 `${APP_NAME}` 等形式；改完必须做一次展开检查。
 - `Set-Content -Encoding UTF8`（PS 5.1）会写 BOM，经 ssh 传到 Linux 执行 `bash -s` 时首行变 `﻿#!/bin/bash` → 报错。远程脚本用 write 工具生成或直接 here-string 管道。
 - 远程诊断常用组合：`py-spy dump --pid`、`/proc/PID/task/*/schedstat`、`/proc/PID/stat` 的 utime/stime、`/proc/PID/stat` 的 minflt、`cgroup memory.events`（看 `high`/`max` 是否在涨）
+- **大 body SSE 中文乱码 + `Unterminated string`**（v0.6.31 已解决）：`_proxy_stateless` 用 `requests.iter_lines(decode_unicode=True)` 但没设 `resp.encoding`；无 charset 的 `text/event-stream` 被 requests 按 ISO-8859-1 解码，中文变 mojibake，汉字 UTF-8 中间字节 `0x85`（先/全）变 `U+0085` 后被 `str.splitlines()` 当换行，把 JSON 劈成半截。教训：**SSE 框架只能按 `b"\n"` 字节分行并原样透传，不能依赖 `iter_lines()` + `splitlines()`**。已部署 0.6.31（`/api/health` 验证）。
 
 ## 经验
 - 验证打包产物是否可启动：Start-Process exe → 检查进程存活 + `Get-NetTCPConnection -LocalPort 6770` + `Invoke-WebRequest http://localhost:6770` HTTP 200

@@ -681,7 +681,18 @@ class TestOversizedRequestGuards(unittest.TestCase):
         m = MagicMock()
         m.ok = True
         m.headers = {"content-type": "text/event-stream"}
-        m.iter_lines.return_value = iter(lines)
+        chunks = []
+        for line in lines:
+            raw = line.encode("utf-8") if isinstance(line, str) else line
+            chunks.append(raw + b"\n")
+        m.iter_content.return_value = iter(chunks)
+        return m
+
+    def _sse_resp_chunks(self, chunks):
+        m = MagicMock()
+        m.ok = True
+        m.headers = {"content-type": "text/event-stream"}
+        m.iter_content.return_value = iter(chunks)
         return m
 
     def test_large_body_forwarded_verbatim(self):
@@ -760,6 +771,87 @@ class TestOversizedRequestGuards(unittest.TestCase):
                                         content_type="application/json")
                 resp.get_data()
                 self.assertEqual(resp.status_code, 200)
+
+    def test_large_body_stream_preserves_utf8_bytes(self):
+        """大 body SSE 必须字节级透传：0x85 不得被当成换行劈开 JSON
+
+        回归 2026-10-26：requests 对无 charset 的 text/event-stream 默认
+        ISO-8859-1，中文变 mojibake；汉字 UTF-8 中间字节 0x85 变成 U+0085
+        后被 str.splitlines() 当换行，opencode 收到半截 JSON 报
+        "Unterminated string"。
+        """
+        app._STATELESS_BODY_BYTES = 256
+        payload = json.dumps({"model": "m", "messages": [
+            {"role": "user", "content": "w" * 1000}]}).encode()
+        chunk_obj = {
+            "id": "x", "object": "chat.completion.chunk", "model": "m",
+            "choices": [{"index": 0, "delta": {
+                "reasoning_content": "先做这个 很 + 全，继续"}}],
+        }
+        sse = ("data: " + json.dumps(chunk_obj, ensure_ascii=False) + "\n\n").encode("utf-8")
+        self.assertIn(b"\x85", sse, "用例必须包含 0x85 字节（先/全）")
+        idx = sse.find(b"\x85")
+        chunks = [sse[:idx + 1], sse[idx + 1:]]
+
+        with patch("app.requests.post") as mock_post:
+            mock_post.return_value = self._sse_resp_chunks(chunks)
+            resp = self.client.post("/v1?by=https://api.test.com/v1", data=payload,
+                                    content_type="application/json")
+            out = resp.get_data()
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(out, sse, "下游必须收到与上游完全一致的字节")
+        for line in out.split(b"\n"):
+            if line.startswith(b"data: ") and line[6:] != b"[DONE]":
+                json.loads(line[6:].decode("utf-8"))
+        self.assertIn("先做这个 很 + 全".encode("utf-8"), out)
+
+    def test_large_body_stream_ignores_u2028_line_separator(self):
+        """JSON 字符串里的 U+2028 不能被当成 SSE 行边界"""
+        app._STATELESS_BODY_BYTES = 256
+        payload = json.dumps({"model": "m", "messages": [
+            {"role": "user", "content": "u" * 1000}]}).encode()
+        chunk_obj = {"choices": [{"index": 0, "delta": {
+            "reasoning_content": "第一段\u2028第二段"}}]}
+        sse = ("data: " + json.dumps(chunk_obj, ensure_ascii=False) + "\n\n").encode("utf-8")
+        self.assertIn("\u2028".encode("utf-8"), sse)
+
+        with patch("app.requests.post") as mock_post:
+            mock_post.return_value = self._sse_resp_chunks(
+                [sse[i:i + 2] for i in range(0, len(sse), 2)])
+            resp = self.client.post("/v1?by=https://api.test.com/v1", data=payload,
+                                    content_type="application/json")
+            out = resp.get_data()
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(out, sse)
+        data_line = out.split(b"\n")[0]
+        summary = json.loads(data_line[6:].decode("utf-8"))
+        self.assertEqual(summary["choices"][0]["delta"]["reasoning_content"],
+                         "第一段\u2028第二段")
+
+    def test_small_body_stream_utf8_not_split(self):
+        """小 body 路径同样用字节分行，0x85 不会劈开事件"""
+        app._STATELESS_BODY_BYTES = 10 * 1024 * 1024
+        body = {"model": "deepseek-v4.1-flash", "stream": True,
+                "messages": [{"role": "user", "content": "hi"}]}
+        chunk_obj = {"choices": [{"index": 0, "delta": {
+            "reasoning_content": "先做这个 很 + 全"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+        data_line = "data: " + json.dumps(chunk_obj, ensure_ascii=False)
+        sse_lines = [data_line, ""]
+
+        with patch("app.requests.post") as mock_post:
+            mock_post.return_value = self._sse_resp(sse_lines)
+            resp = self.client.post("/v1?by=https://api.test.com/v1", json=body)
+            out = resp.get_data()
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("先做这个 很 + 全".encode("utf-8"), out)
+        data_line_bytes = next(l for l in out.split(b"\n") if l.startswith(b"data: "))
+        summary = json.loads(data_line_bytes[6:].decode("utf-8"))
+        self.assertEqual(summary["choices"][0]["delta"]["reasoning_content"],
+                         "先做这个 很 + 全")
 
     def test_small_body_still_full_path_and_replay(self):
         """小 body 行为不变：reasoning_content 仍会回填"""

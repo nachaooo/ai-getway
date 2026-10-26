@@ -1,4 +1,26 @@
-# 任务记录：大请求体触发 GIL 冻结导致全站 504（v0.6.30）
+# 任务记录：大 body SSE 中文乱码 / Unterminated string（v0.6.31）
+
+## 现象
+- 2026-10-26 opencode 大会话（2095 条消息、约 29MB 历史）请求 deepseek-v4.1-flash 时，reasoning 中文全变 `å¾...` 乱码
+- 随机中断：`AI_JSONParseError: JSON parsing failed ... Unterminated string`；同一会话小请求正常
+
+## 根因
+1. 请求体 ≥4MB → 走 `_proxy_stateless()`
+2. `resp.iter_lines(decode_unicode=True)` 未设 `resp.encoding`；上游 `text/event-stream` 无 charset，requests 按 ISO-8859-1 解码
+3. 中文 mojibake；汉字 UTF-8 中间字节 `0x85`（先/全）→ `U+0085`，被 `str.splitlines()` 当换行，JSON 从字符串中间劈开
+
+## 方案
+- 新增 `_iter_sse_raw_lines()` / `_iter_sse_text_lines()`：只按 `b"\n"` 分行
+- `_proxy_stateless()` 原始字节直通；`_handle_stream()` 同样字节分行；SSE 响应补 `charset=utf-8`
+- 回归测试覆盖 `0x85`、`U+2028`、跨包 UTF-8
+
+## 完成情况
+- [x] app.py 修复
+- [x] tests/test_app.py 新增 3 个回归用例（66 全过）
+- [x] VERSION → 0.6.31、CHANGELOG、会话记忆
+- [x] 部署 + 生产验证：`/api/health` 返回 `0.6.31`，服务器 app.py 已含 `_iter_sse_raw_lines`（桌面 exe 未重建）
+
+# 上一任务：大请求体触发 GIL 冻结导致全站 504（v0.6.30）
 
 ## 现象
 - 2026-10-22 `https://ai-getway.fangna.tech/` 返回 504（nginx/1.26.3），持续 30+ 分钟
