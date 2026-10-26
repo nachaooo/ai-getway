@@ -19,13 +19,25 @@
 - **PowerShell 双引号 here-string 会静默清空未定义的 `$var`**：`deploy.ps1` 里 `$remoteScript = @"..."@` 中的 bash 局部变量（如 `$NGX`）会被 PowerShell 当成空串替换，命令变成 `cp /etc/nginx/conf.d/.conf`，且不报错。只能写 PowerShell 里已定义的 `${APP_NAME}` 等形式；改完必须做一次展开检查。
 - `Set-Content -Encoding UTF8`（PS 5.1）会写 BOM，经 ssh 传到 Linux 执行 `bash -s` 时首行变 `﻿#!/bin/bash` → 报错。远程脚本用 write 工具生成或直接 here-string 管道。
 - 远程诊断常用组合：`py-spy dump --pid`、`/proc/PID/task/*/schedstat`、`/proc/PID/stat` 的 utime/stime、`/proc/PID/stat` 的 minflt、`cgroup memory.events`（看 `high`/`max` 是否在涨）
+- **Jinja 模板有缓存**（`TEMPLATES_AUTO_RELOAD` 未开）：改完 `templates/index.html` 必须重启进程才生效，否则会对着旧页面调样式。
+- **headless 截图必须加 `--force-prefers-reduced-motion`**：`--virtual-time-budget` 不推进 CSS 动画，`animation-fill-mode: both` 的元素会停在 opacity 0，看起来像「面板消失」；加了才会渲染真实布局。
+- **`grid-template-rows` 写死行数很脆**：窄屏媒体查询里把列数改掉后，多出来的面板会进隐式行，高度塌成 0 全部叠在一起。换布局时必须同时重置成 `grid-template-rows: none` + `grid-auto-rows`。
+- **前端不依赖外部 CDN**：Google Fonts 与 chart.js 同类问题（不可达会长时间白屏）。字体已自托管在 `static/fonts/`（Bodoni Moda / Jost / IBM Plex Mono，约 100KB），spec 里 `('static','static')` 已整目录打包，新增字体无需改 spec。
 - **大 body SSE 中文乱码 + `Unterminated string`**（v0.6.31 已解决）：`_proxy_stateless` 用 `requests.iter_lines(decode_unicode=True)` 但没设 `resp.encoding`；无 charset 的 `text/event-stream` 被 requests 按 ISO-8859-1 解码，中文变 mojibake，汉字 UTF-8 中间字节 `0x85`（先/全）变 `U+0085` 后被 `str.splitlines()` 当换行，把 JSON 劈成半截。教训：**SSE 框架只能按 `b"\n"` 字节分行并原样透传，不能依赖 `iter_lines()` + `splitlines()`**。已部署 0.6.31（`/api/health` 验证）。
 
 ## 经验
 - 验证打包产物是否可启动：Start-Process exe → 检查进程存活 + `Get-NetTCPConnection -LocalPort 6770` + `Invoke-WebRequest http://localhost:6770` HTTP 200
 - 单文件 PyInstaller 进程树：托盘(PID A) → bootloader 子进程(PID B) → worker(PID C, --worker 参数)
 
-## 当前任务：大 body 触发全站 504 的修复（v0.6.30，2026-10-22 已部署）
+## 当前任务：看板模式重做「黑曜石账本」（v0.6.32，2026-10-26）
+- 设计语言：年报式克制排版——Bodoni Moda 巨大衬线数字 + 黄铜点缀 + 发丝线 + 01–06 编号 + 四角裁切标记 + 胶片颗粒；浅色为象牙纸版本
+- 结构：报头（双线 + 刻度尺）→ 头版主指标（6/3/3 分栏，主数字 122px）→ 趋势/平台/模型/排名/流水/分析六块
+- 交互：区间改下划线 tab；主数字 620ms 缓动计数；卡片 hover 顶部铜线扫入
+- 路由：`/dashboard` 默认进看板，支持 `?layout=` / `?theme=` 深链
+- 字体自托管，已去掉 Google Fonts 外链
+- 关键坑见上（模板缓存 / reduced-motion 截图 / grid 行数）
+
+## 上一任务：大 body 触发全站 504 的修复（v0.6.30，2026-10-22 已部署）
 - 根因：43.9MB 请求体（正常 0.4~0.8MB）→ 解析 + `json.dumps` 持 GIL → 32 线程全卡 → 连 `GET /` 都 504
 - 方案：按 body 大小分层。<4MB 走原逻辑（reasoning 回填 + 精确记账 + 对话入库）；≥4MB（`STATELESS_BODY_MB`）走**原始字节直通**，不解析/不重序列化/不入库，记账取上游 usage
 - 已实证上游 usage 可靠：10-21 全天 3548 请求全部命中 `upstream usage`，fallback 0 次

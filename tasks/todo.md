@@ -1,4 +1,30 @@
-# 任务记录：大 body SSE 中文乱码 / Unterminated string（v0.6.31）
+# 任务记录：看板模式重做「黑曜石账本」（v0.6.32）
+
+## 目标
+看板模式全屏重做，要求「大气、高级」；`/` 默认布局不动。
+
+## 设计方向
+- 概念：年报 / 私人账簿（Obsidian Ledger）。靠字号对比、发丝线、编号、留白出高级感，不靠装饰。
+- 版式：刊物式报头（Bodoni 字标 + 双线 + 刻度尺）→ 头版大数字（6/3/3）→ 01–06 编号面板 → 四角裁切标记 + 内嵌细框 + 颗粒。
+- 配色：暖墨近黑 `#080706` + 黄铜 `#d9b979`/`#f3dda9` + 铜 `#d2633c`；浅色为象牙纸 `#f1ece1` + 深铜墨。
+- 字体：Bodoni Moda / Jost / IBM Plex Mono，**自托管**到 `static/fonts/`（100KB），去掉 Google Fonts 外链。
+
+## 完成情况
+- [x] 重写 `[data-layout="kanban"]` 全部样式（~600 行）
+- [x] 字体下载 + `@font-face` + preload
+- [x] `?layout=` / `?theme=` 深链；`/dashboard` 默认进看板
+- [x] 主数字缓动计数、环比 >999% 截断、up/down 类名修复
+- [x] 图表配色改黄铜系、x 轴禁止倾斜、图例右对齐
+- [x] 三档响应式（1500 / 1120 / 820）
+- [x] 66 个单测通过；未碰 app.py 逻辑
+
+## 审查
+- 用 headless Chrome 逐档截图核对（1920×1080 / 1440×900 / 1100×800 / 1280×800，明暗两套）
+- 踩坑：**Jinja 模板有缓存**（`TEMPLATES_AUTO_RELOAD` 未开），改完 HTML 必须重启进程才生效，否则会被旧页面误导
+- 踩坑：`grid-template-rows` 写死 4 行，在窄屏换成 6 排后隐式行高度塌成 0，多个面板叠在一起；窄屏必须重置成 `grid-template-rows: none` + `grid-auto-rows`
+- 踩坑：headless + `--virtual-time-budget` 不会推进 CSS 动画，`animation-fill-mode: both` 的元素会停在 opacity 0，截图看起来「面板消失」；加 `--force-prefers-reduced-motion` 才是真实布局
+
+# 上一任务：大 body SSE 中文乱码 / Unterminated string（v0.6.31）
 
 ## 现象
 - 2026-10-26 opencode 大会话（2095 条消息、约 29MB 历史）请求 deepseek-v4.1-flash 时，reasoning 中文全变 `å¾...` 乱码

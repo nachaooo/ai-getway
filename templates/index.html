@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI Gateway</title>
 <link rel="icon" type="image/x-icon" href="/static/icon.ico">
+<link rel="preload" href="/static/fonts/bodoni-normal-400_800.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/static/fonts/plex-normal-400.woff2" as="font" type="font/woff2" crossorigin>
 <style>
 :root {
   --bg: #0f0f0f;
@@ -28,6 +30,30 @@
   --tooltip-title: #ccc;
   --tooltip-body: #888;
   --empty: #444;
+  --font-display: "Bodoni Moda", "Bodoni MT", Didot, "Playfair Display", Georgia, serif;
+  --font-label: "IBM Plex Mono", "Cascadia Mono", Consolas, ui-monospace, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", monospace;
+  --font-mono: var(--font-label);
+  --font-body: "Jost", "Bahnschrift", "Avenir Next", "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-sans: var(--font-body);
+  --k-bg: #080706;
+  --k-surface: rgba(21, 18, 14, .60);
+  --k-surface-hover: rgba(28, 24, 19, .78);
+  --k-surface-2: rgba(13, 11, 8, .96);
+  --k-border: rgba(240, 231, 214, .085);
+  --k-border-strong: rgba(240, 231, 214, .21);
+  --k-text: #f2ebdd;
+  --k-muted: #92897a;
+  --k-dim: #5f584b;
+  --k-accent: #d9b979;
+  --k-accent-hi: #f3dda9;
+  --k-accent-ink: #100c05;
+  --k-accent-wash: rgba(217, 185, 121, .06);
+  --k-ember: #d2633c;
+  --k-up: #a3c08c;
+  --k-down: #d2633c;
+  --k-grid: rgba(240, 231, 214, .045);
+  --k-glow-1: rgba(217, 185, 121, .085);
+  --k-glow-2: rgba(210, 99, 60, .05);
 }
 [data-theme="light"] {
   --bg: #f5f5f5;
@@ -51,9 +77,31 @@
   --tooltip-title: #111;
   --tooltip-body: #6b7280;
   --empty: #9ca3af;
+  --k-bg: #f1ece1;
+  --k-surface: rgba(255, 252, 245, .62);
+  --k-surface-hover: rgba(255, 253, 248, .84);
+  --k-surface-2: rgba(255, 253, 247, .96);
+  --k-border: rgba(30, 24, 14, .13);
+  --k-border-strong: rgba(30, 24, 14, .28);
+  --k-text: #17130c;
+  --k-muted: #6a6153;
+  --k-dim: #8f8676;
+  --k-accent: #8a6520;
+  --k-accent-hi: #5f4713;
+  --k-accent-ink: #fbf6ea;
+  --k-accent-wash: rgba(138, 101, 32, .055);
+  --k-ember: #a8461f;
+  --k-up: #5d7a44;
+  --k-down: #a8461f;
+  --k-grid: rgba(30, 24, 14, .055);
+  --k-glow-1: rgba(138, 101, 32, .07);
+  --k-glow-2: rgba(168, 70, 31, .045);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--fg); padding: 20px; }
+.brand-lockup { display: flex; align-items: center; gap: 8px; }
+.brand-sigil, .brand-sub { display: none; }
+.prov-dot { display: inline-block; width: 5px; height: 5px; margin-right: 6px; border-radius: 50%; background: var(--dot, var(--muted)); vertical-align: middle; }
 .container { max-width: 720px; margin: 0 auto; }
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
 h1 { font-size: 15px; color: var(--heading); font-weight: 600; }
@@ -95,22 +143,812 @@ td:last-child, th:last-child { text-align: right; }
 .dropdown-item:hover { background: var(--btn-bg); }
 .dropdown-item input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--btn-active-bg); }
 .config-dropdown > button { background: var(--btn-bg); border: 1px solid var(--btn-border); color: var(--btn-fg); padding: 4px 10px; border-radius: 5px; cursor: pointer; font-size: 11px; line-height: 1; }
-[data-layout="kanban"] body { height: 100vh; overflow: hidden; padding: 12px; }
-[data-layout="kanban"] .container { max-width: 1200px; height: 100%; display: flex; flex-direction: column; gap: 10px; }
-[data-layout="kanban"] .header,
-[data-layout="kanban"] .controls { margin-bottom: 0; flex-shrink: 0; }
-[data-layout="kanban"] .kanban-main { flex: 1; min-height: 0; display: flex; gap: 12px; overflow: hidden; }
-[data-layout="kanban"] .kanban-left { flex: 1; display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: hidden; }
-[data-layout="kanban"] .kanban-right { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-[data-layout="kanban"] .kanban-left .stats { margin-bottom: 0; flex-shrink: 0; }
-[data-layout="kanban"] .kanban-left .section,
-[data-layout="kanban"] .kanban-right .section { margin-bottom: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-[data-layout="kanban"] .chart-wrap { flex-shrink: 0; }
-[data-layout="kanban"] #billingList { flex: 1; overflow-y: auto; min-height: 0; }
-[data-layout="kanban"] #modelUsageList { flex: 1; overflow-y: auto; min-height: 0; }
-[data-layout="kanban"] .table-scroll { flex: 1; overflow-y: auto; min-height: 0; }
-[data-layout="kanban"] .pages { flex-shrink: 0; margin-top: 8px; }
-[data-layout="kanban"] h2 { flex-shrink: 0; }
+/* 自托管字体（不依赖外部 CDN，离线 / 内网可用） */
+@font-face { font-family: "Bodoni Moda"; src: url("/static/fonts/bodoni-normal-400_800.woff2") format("woff2"); font-weight: 400 800; font-style: normal; font-display: swap; }
+@font-face { font-family: "Jost"; src: url("/static/fonts/jost-normal-300_600.woff2") format("woff2"); font-weight: 300 600; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("/static/fonts/plex-normal-400.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("/static/fonts/plex-normal-500.woff2") format("woff2"); font-weight: 500; font-style: normal; font-display: swap; }
+
+/* ── 看板 / DASHBOARD：全屏「黑曜石账本」───────────────────────────
+   Obsidian Ledger。年报式的克制排版：巨大衬线数字、发丝线、黄铜点缀、
+   四角裁切标记与胶片颗粒。区别于默认模式，所有规则都挂在 kanban 下。 */
+.k-frame { display: none; }
+
+[data-layout="kanban"] body {
+  height: 100dvh;
+  overflow: hidden;
+  padding: 0;
+  background: var(--k-bg);
+  color: var(--k-text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+[data-layout="kanban"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: .045;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+[data-theme="light"][data-layout="kanban"] body::before { opacity: .028; }
+[data-layout="kanban"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(1180px 700px at 6% -22%, var(--k-glow-1), transparent 64%),
+    radial-gradient(900px 560px at 102% -12%, var(--k-glow-2), transparent 68%),
+    linear-gradient(var(--k-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--k-grid) 1px, transparent 1px);
+  background-size: auto, auto, 96px 96px, 96px 96px;
+}
+[data-layout="kanban"] ::selection { background: var(--k-accent); color: var(--k-accent-ink); }
+
+[data-layout="kanban"] .k-frame {
+  display: block;
+  position: fixed;
+  inset: clamp(10px, .85vw, 17px);
+  z-index: 40;
+  pointer-events: none;
+  border: 1px solid var(--k-border);
+}
+[data-layout="kanban"] .k-frame i {
+  position: absolute;
+  width: 13px;
+  height: 13px;
+  border: 0 solid var(--k-accent);
+  opacity: .5;
+}
+[data-layout="kanban"] .k-frame i:nth-child(1) { top: -1px; left: -1px; border-top-width: 1px; border-left-width: 1px; }
+[data-layout="kanban"] .k-frame i:nth-child(2) { top: -1px; right: -1px; border-top-width: 1px; border-right-width: 1px; }
+[data-layout="kanban"] .k-frame i:nth-child(3) { bottom: -1px; left: -1px; border-bottom-width: 1px; border-left-width: 1px; }
+[data-layout="kanban"] .k-frame i:nth-child(4) { bottom: -1px; right: -1px; border-bottom-width: 1px; border-right-width: 1px; }
+
+[data-layout="kanban"] .container {
+  position: relative;
+  z-index: 1;
+  max-width: none;
+  width: 100%;
+  height: 100dvh;
+  margin: 0;
+  padding: clamp(20px, 2vw, 36px) clamp(22px, 2.6vw, 58px) clamp(17px, 1.7vw, 28px);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: clamp(9px, .85vw, 15px);
+}
+
+/* ── 报头 ─────────────────────────────────────────────────── */
+[data-layout="kanban"] .header {
+  position: relative;
+  margin: 0;
+  padding: 0 0 clamp(13px, 1.2vw, 21px);
+  align-items: flex-end;
+  border-bottom: 1px solid var(--k-border-strong);
+  animation: k-rise .8s cubic-bezier(.16, .8, .24, 1) both;
+}
+[data-layout="kanban"] .header::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, var(--k-accent), var(--k-accent) 0%, transparent 58%);
+  transform-origin: left;
+  opacity: .8;
+  animation: k-draw 1.5s cubic-bezier(.16, .8, .24, 1) .12s both;
+}
+[data-layout="kanban"] .header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -7px;
+  height: 5px;
+  background-image: repeating-linear-gradient(90deg, var(--k-border-strong) 0 1px, transparent 1px 15px);
+  opacity: .45;
+  pointer-events: none;
+}
+[data-layout="kanban"] .brand-lockup { gap: clamp(12px, 1.1vw, 18px); }
+[data-layout="kanban"] .brand-sigil {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: clamp(40px, 3.3vw, 52px);
+  height: clamp(40px, 3.3vw, 52px);
+  flex-shrink: 0;
+  border: 1px solid var(--k-border-strong);
+  color: var(--k-accent);
+  font-family: var(--font-label);
+  font-size: 8px;
+  line-height: 1.35;
+  letter-spacing: .1em;
+  text-align: center;
+}
+[data-layout="kanban"] .brand-sigil::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border: 1px solid var(--k-border);
+  pointer-events: none;
+}
+[data-layout="kanban"] h1 {
+  font-family: var(--font-display);
+  font-size: clamp(30px, 3.1vw, 54px);
+  font-weight: 400;
+  line-height: .9;
+  letter-spacing: -.018em;
+  color: var(--k-text);
+}
+[data-layout="kanban"] .brand-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 10px;
+  font-family: var(--font-label);
+  font-size: 8.5px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+}
+[data-layout="kanban"] .brand-sub .k-sep { color: var(--k-dim); }
+[data-layout="kanban"] .pulse-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--k-accent);
+  box-shadow: 0 0 0 0 var(--k-glow-1);
+  animation: k-pulse 2.4s ease-out infinite;
+}
+[data-layout="kanban"] #kanbanClock { color: var(--k-accent-hi); letter-spacing: .1em; }
+
+[data-layout="kanban"] .toolbar { gap: 5px; align-self: flex-end; }
+[data-layout="kanban"] .toolbar button,
+[data-layout="kanban"] .config-dropdown > button {
+  background: transparent;
+  border: 1px solid var(--k-border);
+  color: var(--k-muted);
+  padding: 8px 12px;
+  border-radius: 0;
+  font-family: var(--font-label);
+  font-size: 8px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  transition: color .25s, border-color .25s, background-color .25s;
+}
+[data-layout="kanban"] .toolbar button:hover,
+[data-layout="kanban"] .config-dropdown > button:hover {
+  color: var(--k-accent-hi);
+  border-color: var(--k-border-strong);
+  background: var(--k-accent-wash);
+}
+[data-layout="kanban"] .dropdown-content {
+  background: var(--k-surface-2);
+  border-color: var(--k-border-strong);
+  border-radius: 0;
+  backdrop-filter: blur(20px);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .5);
+}
+[data-layout="kanban"] .dropdown-item {
+  font-family: var(--font-label);
+  font-size: 9px;
+  color: var(--k-muted);
+  letter-spacing: .08em;
+}
+[data-layout="kanban"] .dropdown-item:hover { background: var(--k-accent-wash); color: var(--k-text); }
+[data-layout="kanban"] .dropdown-item input[type="checkbox"] { accent-color: var(--k-accent); }
+
+/* ── 区间条 ───────────────────────────────────────────────── */
+[data-layout="kanban"] .controls {
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  align-items: center;
+  animation: k-rise .8s cubic-bezier(.16, .8, .24, 1) .06s both;
+}
+[data-layout="kanban"] .controls::before {
+  content: "RANGE";
+  padding-right: 18px;
+  font-family: var(--font-label);
+  font-size: 8px;
+  letter-spacing: .26em;
+  color: var(--k-dim);
+}
+[data-layout="kanban"] .controls::after {
+  content: "UTC+08:00  ·  AUTO REFRESH 15S";
+  margin-left: auto;
+  font-family: var(--font-label);
+  font-size: 8px;
+  letter-spacing: .18em;
+  color: var(--k-dim);
+}
+[data-layout="kanban"] .controls button {
+  position: relative;
+  background: transparent;
+  border: 0;
+  color: var(--k-muted);
+  padding: 6px 14px 9px;
+  border-radius: 0;
+  font-family: var(--font-label);
+  font-size: 8.5px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  transition: color .22s;
+}
+[data-layout="kanban"] .controls button::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 0;
+  height: 1px;
+  background: var(--k-accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform .34s cubic-bezier(.16, .8, .24, 1);
+}
+[data-layout="kanban"] .controls button:hover { color: var(--k-text); }
+[data-layout="kanban"] .controls button:hover::after { transform: scaleX(.45); }
+[data-layout="kanban"] .controls button.active { color: var(--k-accent-hi); }
+[data-layout="kanban"] .controls button.active::after { transform: scaleX(1); }
+[data-layout="kanban"] .controls .date-inputs { margin-left: 12px; }
+[data-layout="kanban"] .controls .date-inputs input[type="date"] {
+  background: transparent;
+  border: 1px solid var(--k-border);
+  border-bottom-color: var(--k-border-strong);
+  color: var(--k-text);
+  font-family: var(--font-label);
+  font-size: 9px;
+  border-radius: 0;
+  padding: 5px 8px;
+}
+[data-layout="kanban"] .controls .date-inputs input[type="date"]:focus { border-color: var(--k-accent); outline: none; }
+[data-layout="kanban"] .controls .date-inputs span { color: var(--k-dim); }
+
+/* ── 主网格 ───────────────────────────────────────────────── */
+[data-layout="kanban"] .kanban-main {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-rows: auto repeat(2, minmax(0, 1fr)) minmax(0, 1.22fr);
+  grid-auto-flow: row dense;
+  gap: clamp(9px, .85vw, 15px);
+  min-height: 0;
+  overflow: auto;
+  padding: 1px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--k-border-strong) transparent;
+}
+[data-layout="kanban"] .kanban-main::-webkit-scrollbar { width: 8px; height: 8px; }
+[data-layout="kanban"] .kanban-main::-webkit-scrollbar-track { background: transparent; }
+[data-layout="kanban"] .kanban-main::-webkit-scrollbar-thumb { background: var(--k-border-strong); }
+[data-layout="kanban"] .kanban-left,
+[data-layout="kanban"] .kanban-right { display: contents; }
+
+/* ── 主指标（报头大数字） ─────────────────────────────────── */
+[data-layout="kanban"] .stats {
+  position: relative;
+  grid-column: span 12;
+  order: 1;
+  align-self: start;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  margin: 0;
+  border: 1px solid var(--k-border);
+  border-radius: 0;
+  background:
+    linear-gradient(112deg, var(--k-accent-wash), transparent 40%),
+    var(--k-surface);
+  overflow: hidden;
+  counter-reset: k-stat;
+  animation: k-rise .8s cubic-bezier(.16, .8, .24, 1) .1s both;
+}
+[data-layout="kanban"] .stats::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: linear-gradient(180deg, var(--k-accent), transparent 90%);
+}
+[data-layout="kanban"] .stats::after {
+  content: "";
+  position: absolute;
+  right: -14%;
+  top: -55%;
+  width: 52%;
+  height: 210%;
+  background: linear-gradient(101deg, transparent 49.6%, var(--k-border) 49.8%, transparent 50.2%);
+  pointer-events: none;
+  opacity: .9;
+}
+[data-layout="kanban"] .stat {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 0;
+  border-left: 1px solid var(--k-border);
+  border-radius: 0;
+  background: transparent;
+  padding: clamp(15px, 1.4vw, 25px) clamp(17px, 1.8vw, 33px) clamp(14px, 1.3vw, 22px);
+}
+[data-layout="kanban"] .stat:nth-child(1) { grid-column: span 6; border-left: 0; }
+[data-layout="kanban"] .stat:nth-child(2),
+[data-layout="kanban"] .stat:nth-child(3) { grid-column: span 3; }
+[data-layout="kanban"] .stat::before {
+  counter-increment: k-stat;
+  content: "0" counter(k-stat);
+  order: 0;
+  margin-bottom: clamp(11px, 1vw, 17px);
+  font-family: var(--font-label);
+  font-size: 8px;
+  letter-spacing: .26em;
+  color: var(--k-dim);
+}
+[data-layout="kanban"] .stat .l {
+  order: 1;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 clamp(9px, .85vw, 14px);
+  padding: 0;
+  font-family: var(--font-label);
+  font-size: 8px;
+  letter-spacing: .24em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+}
+[data-layout="kanban"] .stat .l::before {
+  content: "";
+  width: 14px;
+  height: 1px;
+  flex-shrink: 0;
+  background: var(--k-accent);
+  opacity: .75;
+}
+[data-layout="kanban"] .stat .n {
+  order: 2;
+  font-family: var(--font-display);
+  font-size: clamp(26px, min(2.7vw, 4.6vh), 50px);
+  font-weight: 400;
+  line-height: 1.02;
+  letter-spacing: -.02em;
+  color: var(--k-text);
+  font-variant-numeric: tabular-nums lining-nums;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+[data-layout="kanban"] .stat:nth-child(1) .n {
+  font-size: clamp(48px, min(6.6vw, 11vh), 122px);
+  line-height: .86;
+  letter-spacing: -.035em;
+  color: var(--k-accent-hi);
+}
+[data-layout="kanban"] .stat .mom {
+  order: 3;
+  margin: auto 0 0;
+  padding-top: clamp(10px, 1vw, 16px);
+  font-family: var(--font-label);
+  font-size: 9px;
+  letter-spacing: .1em;
+  color: var(--k-dim);
+}
+[data-layout="kanban"] .stat .mom.up { color: var(--k-up); }
+[data-layout="kanban"] .stat .mom.down { color: var(--k-down); }
+[data-layout="kanban"] .stats-empty {
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: center;
+  padding: 46px 0;
+  color: var(--k-dim);
+  font-family: var(--font-label);
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+/* ── 面板 ─────────────────────────────────────────────────── */
+[data-layout="kanban"] .section {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 152px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--k-border);
+  border-radius: 0;
+  background: var(--k-surface);
+  animation: k-rise .8s cubic-bezier(.16, .8, .24, 1) both;
+  transition: border-color .3s, background-color .3s;
+}
+[data-layout="kanban"] .section::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, var(--k-accent), transparent 42%);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform .55s cubic-bezier(.16, .8, .24, 1);
+  pointer-events: none;
+}
+[data-layout="kanban"] .section:hover { border-color: var(--k-border-strong); background: var(--k-surface-hover); }
+[data-layout="kanban"] .section:hover::after { transform: scaleX(1); }
+[data-layout="kanban"] .section h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 11px;
+  flex-shrink: 0;
+  margin: 0;
+  padding: clamp(12px, 1.1vw, 16px) clamp(13px, 1.25vw, 20px) clamp(10px, .95vw, 13px);
+  border-bottom: 1px solid var(--k-border);
+  font-family: var(--font-label);
+  font-size: 8px;
+  font-weight: 500;
+  letter-spacing: .24em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+}
+[data-layout="kanban"] .section h2::before {
+  font-family: var(--font-label);
+  font-size: 8px;
+  font-weight: 400;
+  letter-spacing: .16em;
+  color: var(--k-accent);
+  opacity: .8;
+}
+[data-layout="kanban"] .section h2::after {
+  margin-left: auto;
+  font-size: 7px;
+  letter-spacing: .2em;
+  color: var(--k-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+[data-layout="kanban"] .section:has(#trendChart) { grid-column: span 8; order: 2; animation-delay: .16s; }
+[data-layout="kanban"] .section:has(#billingList) { grid-column: span 4; order: 3; animation-delay: .2s; }
+[data-layout="kanban"] .section:has(#modelsTrendChart) { grid-column: span 7; order: 4; animation-delay: .24s; }
+[data-layout="kanban"] .section:has(#modelUsageList) { grid-column: span 5; order: 5; animation-delay: .28s; }
+[data-layout="kanban"] .kanban-right .section { grid-column: span 8; order: 6; animation-delay: .32s; }
+[data-layout="kanban"] .section:has(#insightsList) { grid-column: span 4; order: 7; animation-delay: .36s; }
+[data-layout="kanban"] .section:has(#trendChart) h2::before { content: "01"; }
+[data-layout="kanban"] .section:has(#billingList) h2::before { content: "02"; }
+[data-layout="kanban"] .section:has(#modelsTrendChart) h2::before { content: "03"; }
+[data-layout="kanban"] .section:has(#modelUsageList) h2::before { content: "04"; }
+[data-layout="kanban"] .kanban-right .section h2::before { content: "05"; }
+[data-layout="kanban"] .section:has(#insightsList) h2::before { content: "06"; }
+[data-layout="kanban"] .section:has(#trendChart) h2::after { content: "TOKENS × REQUESTS"; }
+[data-layout="kanban"] .section:has(#billingList) h2::after { content: "BY PROVIDER"; }
+[data-layout="kanban"] .section:has(#modelsTrendChart) h2::after { content: "BY MODEL"; }
+[data-layout="kanban"] .section:has(#modelUsageList) h2::after { content: "RANKED"; }
+[data-layout="kanban"] .kanban-right .section h2::after { content: "LIVE FEED"; }
+[data-layout="kanban"] .section:has(#insightsList) h2::after { content: "AI DIGEST"; }
+[data-layout="kanban"] .section .chart-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 104px;
+  height: auto;
+  padding: 12px 14px 8px;
+}
+[data-layout="kanban"] #billingList,
+[data-layout="kanban"] #modelUsageList {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 13px 10px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--k-border-strong) transparent;
+  -webkit-mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 16px), transparent 100%);
+}
+[data-layout="kanban"] .table-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--k-border-strong) transparent;
+}
+[data-layout="kanban"] .pages {
+  flex-shrink: 0;
+  justify-content: flex-end;
+  gap: 0;
+  margin: 0;
+  padding: 8px 11px;
+  border-top: 1px solid var(--k-border);
+}
+[data-layout="kanban"] .pages button {
+  background: transparent;
+  border: 0;
+  color: var(--k-dim);
+  padding: 5px 9px;
+  border-radius: 0;
+  font-family: var(--font-label);
+  font-size: 8px;
+  letter-spacing: .1em;
+}
+[data-layout="kanban"] .pages button:hover { color: var(--k-text); }
+[data-layout="kanban"] .pages button.active { color: var(--k-accent-hi); box-shadow: inset 0 -1px 0 var(--k-accent); }
+[data-layout="kanban"] .empty,
+[data-layout="kanban"] .chart-empty,
+[data-layout="kanban"] .stats-empty {
+  color: var(--k-dim);
+  font-family: var(--font-label);
+  font-size: 9px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+/* ── 排名 ─────────────────────────────────────────────────── */
+[data-layout="kanban"] .rank-list { display: flex; flex-direction: column; }
+[data-layout="kanban"] .rank-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 11px;
+  padding: 7px 2px;
+  border-bottom: 1px solid var(--k-border);
+  align-items: start;
+}
+[data-layout="kanban"] .rank-row:last-child { border-bottom: 0; }
+[data-layout="kanban"] .rank-index {
+  padding-top: 3px;
+  font-family: var(--font-label);
+  font-size: 8px;
+  letter-spacing: .1em;
+  color: var(--k-dim);
+}
+[data-layout="kanban"] .rank-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+[data-layout="kanban"] .rank-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  letter-spacing: .01em;
+  color: var(--k-text);
+}
+[data-layout="kanban"] .rank-total {
+  flex-shrink: 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: -.01em;
+  color: var(--k-accent-hi);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+[data-layout="kanban"] .rank-bar {
+  height: 1px;
+  margin: 7px 0 6px;
+  overflow: hidden;
+  background: var(--k-border);
+}
+[data-layout="kanban"] .rank-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--k-accent), var(--k-ember));
+  transform-origin: left;
+  animation: k-bar 1s cubic-bezier(.16, .8, .24, 1) both;
+}
+[data-layout="kanban"] .rank-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 11px;
+  font-family: var(--font-label);
+  font-size: 7.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--k-dim);
+}
+
+/* ── 实时流水 ─────────────────────────────────────────────── */
+[data-layout="kanban"] #recentTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-label);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+[data-layout="kanban"] #recentTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 8px 10px;
+  background: var(--k-surface-2);
+  border-bottom: 1px solid var(--k-border-strong);
+  color: var(--k-dim);
+  font-size: 7.5px;
+  font-weight: 500;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+}
+[data-layout="kanban"] #recentTable td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--k-border);
+  color: var(--k-muted);
+  white-space: nowrap;
+}
+[data-layout="kanban"] #recentTable tbody tr { transition: background-color .18s; }
+[data-layout="kanban"] #recentTable tbody tr:hover td { background: var(--k-accent-wash); color: var(--k-text); }
+[data-layout="kanban"] #recentTable tbody tr:hover td:first-child { box-shadow: inset 2px 0 0 var(--k-accent); }
+[data-layout="kanban"] #recentTable td:nth-child(2) { color: var(--k-text); }
+[data-layout="kanban"] .prov-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 7px;
+  border-radius: 0;
+  background: var(--dot, var(--k-muted));
+  transform: rotate(45deg);
+  vertical-align: middle;
+}
+
+/* ── 活动分析 ─────────────────────────────────────────────── */
+[data-layout="kanban"] .insights-controls {
+  gap: 0;
+  margin: 0;
+  padding: 7px 12px 3px;
+  flex-wrap: wrap;
+}
+[data-layout="kanban"] .insights-controls button {
+  background: transparent;
+  border: 0;
+  color: var(--k-dim);
+  padding: 4px 9px;
+  border-radius: 0;
+  font-family: var(--font-label);
+  font-size: 7.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+[data-layout="kanban"] .insights-controls button:hover { color: var(--k-text); }
+[data-layout="kanban"] .insights-controls button.active {
+  background: transparent;
+  border: 0;
+  color: var(--k-accent-hi);
+  box-shadow: inset 0 -1px 0 var(--k-accent);
+}
+[data-layout="kanban"] #insightsList {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 14px 13px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--k-border-strong) transparent;
+}
+[data-layout="kanban"] .insight-period { padding: 12px 0; border-bottom: 1px solid var(--k-border); }
+[data-layout="kanban"] .insight-period:last-child { border-bottom: 0; }
+[data-layout="kanban"] .insight-head b {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 400;
+  letter-spacing: -.01em;
+  color: var(--k-text);
+}
+[data-layout="kanban"] .insight-head .muted { font-family: var(--font-label); font-size: 8px; letter-spacing: .06em; color: var(--k-dim); }
+[data-layout="kanban"] .insight-summary { color: var(--k-muted); font-size: 11.5px; line-height: 1.75; }
+[data-layout="kanban"] .insight-meta { font-family: var(--font-label); font-size: 8px; letter-spacing: .06em; color: var(--k-dim); }
+[data-layout="kanban"] .topic-name { color: var(--k-text); font-size: 11px; }
+[data-layout="kanban"] .insight-topic li,
+[data-layout="kanban"] .insight-suggestions li { color: var(--k-muted); font-size: 10.5px; line-height: 1.65; }
+[data-layout="kanban"] .insight-suggestions { border-top-color: var(--k-border); }
+[data-layout="kanban"] .insight-suggestions b { color: var(--k-text); font-family: var(--font-label); font-size: 8px; letter-spacing: .16em; text-transform: uppercase; }
+[data-layout="kanban"] .insights-start { padding: 26px 12px; }
+[data-layout="kanban"] .insights-start-hint { color: var(--k-dim); font-family: var(--font-label); font-size: 9px; line-height: 1.7; letter-spacing: .06em; }
+[data-layout="kanban"] .insights-start-btn {
+  background: transparent;
+  border: 1px solid var(--k-border-strong);
+  color: var(--k-accent-hi);
+  border-radius: 0;
+  padding: 8px 18px;
+  font-family: var(--font-label);
+  font-size: 8px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  transition: color .25s, border-color .25s, background-color .25s;
+}
+[data-layout="kanban"] .insights-start-btn:hover { background: var(--k-accent-wash); border-color: var(--k-accent); }
+[data-layout="kanban"] .spinner { border-color: var(--k-border); border-top-color: var(--k-accent); }
+
+@keyframes k-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes k-draw {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes k-bar {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes k-pulse {
+  0% { box-shadow: 0 0 0 0 var(--k-glow-1); }
+  70%, 100% { box-shadow: 0 0 0 8px transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-layout="kanban"] *,
+  [data-layout="kanban"] *::before,
+  [data-layout="kanban"] *::after {
+    animation-duration: .001ms !important;
+    animation-delay: 0s !important;
+    transition-duration: .001ms !important;
+  }
+}
+
+@media (max-width: 1500px) {
+  [data-layout="kanban"] .section:has(#trendChart) { grid-column: span 7; }
+  [data-layout="kanban"] .section:has(#billingList) { grid-column: span 5; }
+  [data-layout="kanban"] .section:has(#modelsTrendChart) { grid-column: span 7; }
+  [data-layout="kanban"] .section:has(#modelUsageList) { grid-column: span 5; }
+  [data-layout="kanban"] .kanban-right .section { grid-column: span 7; }
+  [data-layout="kanban"] .section:has(#insightsList) { grid-column: span 5; }
+}
+@media (max-width: 1120px) {
+  [data-layout="kanban"] .container { padding: 18px 18px 16px; }
+  [data-layout="kanban"] .kanban-main {
+    grid-template-rows: none;
+    grid-auto-rows: minmax(168px, auto);
+  }
+  [data-layout="kanban"] .section:has(#trendChart),
+  [data-layout="kanban"] .section:has(#modelsTrendChart),
+  [data-layout="kanban"] .kanban-right .section { grid-column: span 12; }
+  [data-layout="kanban"] .section:has(#billingList),
+  [data-layout="kanban"] .section:has(#modelUsageList),
+  [data-layout="kanban"] .section:has(#insightsList) { grid-column: span 6; }
+  [data-layout="kanban"] .controls::after { display: none; }
+}
+@media (max-width: 820px) {
+  [data-layout="kanban"] body { height: auto; overflow: auto; }
+  [data-layout="kanban"] .container {
+    height: auto;
+    min-height: 100dvh;
+    grid-template-rows: auto;
+    padding: 16px 14px;
+  }
+  [data-layout="kanban"] .k-frame { display: none; }
+  [data-layout="kanban"] .header { align-items: flex-start; flex-direction: column; gap: 14px; }
+  [data-layout="kanban"] .toolbar { flex-wrap: wrap; }
+  [data-layout="kanban"] .controls { flex-wrap: wrap; }
+  [data-layout="kanban"] .controls::before { display: none; }
+  [data-layout="kanban"] .kanban-main {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+    grid-auto-rows: auto;
+    overflow: visible;
+  }
+  [data-layout="kanban"] .stats { grid-template-columns: 1fr; }
+  [data-layout="kanban"] .stat { border-left: 0; border-top: 1px solid var(--k-border); }
+  [data-layout="kanban"] .stat:nth-child(1),
+  [data-layout="kanban"] .stat:nth-child(2),
+  [data-layout="kanban"] .stat:nth-child(3) { grid-column: span 1; }
+  [data-layout="kanban"] .stat:nth-child(1) .n { font-size: clamp(52px, 16vw, 84px); }
+  [data-layout="kanban"] .section:has(#trendChart),
+  [data-layout="kanban"] .section:has(#billingList),
+  [data-layout="kanban"] .section:has(#modelsTrendChart),
+  [data-layout="kanban"] .section:has(#modelUsageList),
+  [data-layout="kanban"] .kanban-right .section,
+  [data-layout="kanban"] .section:has(#insightsList) { grid-column: span 1; }
+  [data-layout="kanban"] .section .chart-wrap { min-height: 180px; }
+  [data-layout="kanban"] #billingList,
+  [data-layout="kanban"] #modelUsageList,
+  [data-layout="kanban"] #insightsList { max-height: 420px; }
+  [data-layout="kanban"] .table-scroll { max-height: 420px; }
+}
 
 /* 活动分析 */
 .insights-controls { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
@@ -174,8 +1012,22 @@ td:last-child, th:last-child { text-align: right; }
 </head>
 <body>
 <div class="container">
+  <div class="k-frame" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
   <div class="header">
-    <h1 id="pageTitle">AI Gateway</h1>
+    <div class="brand-lockup">
+      <div class="brand-sigil">AG<br>//01</div>
+      <div class="brand-copy">
+        <h1 id="pageTitle">AI Gateway</h1>
+        <div class="brand-sub">
+          <span class="pulse-dot"></span>
+          <span>LIVE TELEMETRY</span>
+          <span class="k-sep">/</span>
+          <span id="kDate">----------</span>
+          <span class="k-sep">/</span>
+          <span id="kanbanClock">--:--:--</span>
+        </div>
+      </div>
+    </div>
     <div class="toolbar">
       <div class="config-dropdown">
         <button id="configBtn" onclick="toggleConfigMenu()">⚙</button>
@@ -280,7 +1132,7 @@ td:last-child, th:last-child { text-align: right; }
         <h2 data-i18n="recentTitle">最近请求</h2>
         <div class="table-scroll">
           <table>
-            <thead><tr><th data-i18n="colTime">时间</th><th data-i18n="colModel">模型</th><th data-i18n="colProvider">平台</th><th data-i18n="colInput">输入</th><th data-i18n="colOutput">输出</th><th>缓存命中</th><th>推理</th><th data-i18n="statSpeed">Token/s</th></tr></thead>
+            <thead><tr><th data-i18n="colTime">时间</th><th data-i18n="colModel">模型</th><th data-i18n="colProvider">平台</th><th data-i18n="colInput">输入</th><th data-i18n="colOutput">输出</th><th data-i18n="colCache">缓存命中</th><th data-i18n="colReasoning">推理</th><th data-i18n="statSpeed">Token/s</th></tr></thead>
             <tbody id="recentTable"></tbody>
           </table>
         </div>
@@ -303,7 +1155,7 @@ const I18N = {
     range1h: '1小时', range24h: '24小时', range7d: '7天', range30d: '30天', rangeToday: '今日',     rangeYesterday: '昨日', rangeCustom: '自定义',
     statRequests: '对话次数', statInput: '输入 Token', statOutput: '输出 Token', statSpeed: 'Token/s',
     trendTitle: '用量趋势', modelsTrendTitle: '模型趋势', billingTitle: '各平台使用量', modelUsageTitle: '各模型使用量', recentTitle: '最近请求',
-    colTime: '时间', colModel: '模型', colProvider: '平台', colInput: '输入', colOutput: '输出',
+    colTime: '时间', colModel: '模型', colProvider: '平台', colInput: '输入', colOutput: '输出', colCache: '缓存命中', colReasoning: '推理',
     prev: '上一页', next: '下一页', empty: '暂无数据', token: 'Token', requests: '请求数',
     layoutDefault: '默认', layoutKanban: '看板',
     dbExport: '导出', dbImport: '导入',
@@ -320,7 +1172,7 @@ const I18N = {
     range1h: '1h', range24h: '24h', range7d: '7d', range30d: '30d', rangeToday: 'Today',     rangeYesterday: 'Yesterday', rangeCustom: 'Custom',
     statRequests: 'Conversations', statInput: 'Input Tokens', statOutput: 'Output Tokens', statSpeed: 'Token/s',
     trendTitle: 'Usage Trend', modelsTrendTitle: 'Models Trend', billingTitle: 'Provider Usage', modelUsageTitle: 'Model Usage', recentTitle: 'Recent Requests',
-    colTime: 'Time', colModel: 'Model', colProvider: 'Provider', colInput: 'Input', colOutput: 'Output',
+    colTime: 'Time', colModel: 'Model', colProvider: 'Provider', colInput: 'Input', colOutput: 'Output', colCache: 'Cache Hit', colReasoning: 'Reasoning',
     prev: 'Prev', next: 'Next', empty: 'No data', token: 'Token', requests: 'Requests',
     layoutDefault: 'Default', layoutKanban: 'Kanban',
     dbExport: 'Export', dbImport: 'Import',
@@ -371,10 +1223,37 @@ function toggleTheme() {
   fetchRecent(page);
 }
 
+function isKanban() {
+  return (document.documentElement.getAttribute('data-layout') || 'default') === 'kanban';
+}
+
+function cssVar(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
+function hexA(hex, alpha) {
+  const raw = String(hex || '').replace('#', '');
+  const full = raw.length === 3 ? raw.split('').map(c => c + c).join('') : raw;
+  if (full.length !== 6) return hex;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function providerColor(name) {
+  const palette = ['#d8ff3e', '#ff8a5c', '#7ee7c7', '#8fb4ff', '#f5c56b', '#c7a6ff'];
+  let h = 0;
+  for (const ch of String(name || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return palette[h % palette.length];
+}
+
 function applyLayout() {
   const lang = document.documentElement.getAttribute('data-lang') || 'zh';
   const layout = document.documentElement.getAttribute('data-layout') || 'default';
   document.getElementById('layoutBtn').textContent = layout === 'default' ? I18N[lang].layoutKanban : I18N[lang].layoutDefault;
+  document.title = layout === 'kanban' ? 'AI Gateway — Ledger' : 'AI Gateway';
 }
 
 function toggleLayout() {
@@ -383,6 +1262,22 @@ function toggleLayout() {
   document.documentElement.setAttribute('data-layout', next);
   localStorage.setItem('ag_layout', next);
   applyLayout();
+  // 排名列表 / 表格在两种布局下结构不同，切换后立即重绘
+  fetchAll();
+  fetchRecent(page);
+}
+
+function tickClock() {
+  const el = document.getElementById('kanbanClock');
+  if (!el) return;
+  const d = new Date();
+  el.textContent = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  const dd = document.getElementById('kDate');
+  if (dd && !dd.dataset.done) {
+    const wd = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][d.getDay()];
+    dd.textContent = `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${wd}`;
+    dd.dataset.done = '1';
+  }
 }
 
 function initPrefs() {
@@ -391,7 +1286,9 @@ function initPrefs() {
   const savedRange = localStorage.getItem('ag_range');
   const savedLayout = localStorage.getItem('ag_layout');
   const savedSections = JSON.parse(localStorage.getItem('ag_sections') || '{}');
-  if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
+  const forcedTheme = new URLSearchParams(location.search).get('theme');
+  if (forcedTheme === 'light' || forcedTheme === 'dark') document.documentElement.setAttribute('data-theme', forcedTheme);
+  else if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
   if (savedLang) document.documentElement.setAttribute('data-lang', savedLang);
   if (savedRange) {
     document.querySelectorAll('[data-range]').forEach(b => b.classList.remove('active'));
@@ -405,7 +1302,12 @@ function initPrefs() {
       if (e) document.getElementById('endDateInput').value = e;
     }
   }
-  if (savedLayout) document.documentElement.setAttribute('data-layout', savedLayout);
+  // 布局优先级：URL 参数 > 本地偏好 > 路径默认（/dashboard 即看板）
+  const forcedLayout = new URLSearchParams(location.search).get('layout');
+  const bootLayout = (forcedLayout === 'kanban' || forcedLayout === 'default')
+    ? forcedLayout
+    : (savedLayout || (location.pathname.replace(/\/$/, '') === '/dashboard' ? 'kanban' : 'default'));
+  document.documentElement.setAttribute('data-layout', bootLayout);
   applyTheme();
   applyLang();
   applyLayout();
@@ -484,15 +1386,44 @@ function weekdayLabel(p) {
 
 function chartColors() {
   const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+  if (isKanban()) {
+    const accent = cssVar('--k-accent-hi', '#f3dda9');
+    const ember = cssVar('--k-ember', '#d2633c');
+    return {
+      line: accent, line2: ember,
+      lineFill: hexA(accent, .10), line2Fill: hexA(ember, .04),
+      tooltipBg: cssVar('--k-surface-2', '#0d0b08'),
+      tooltipBorder: cssVar('--k-border-strong', 'rgba(240,231,214,.21)'),
+      tooltipTitle: cssVar('--k-text', '#f2ebdd'),
+      tooltipBody: cssVar('--k-muted', '#92897a'),
+      grid: cssVar('--k-grid', 'rgba(240,231,214,.045)'),
+      tick: cssVar('--k-muted', '#92897a'),
+      legend: cssVar('--k-muted', '#92897a'),
+      mono: cssVar('--font-label', 'monospace'),
+      palette: ['#f3dda9', '#d9a15b', '#d2633c', '#9fbb8a', '#8fa9c9', '#b49ac9', '#c9a227', '#7fb3a8'],
+    };
+  }
   if (theme === 'light') {
     return {
+      line: '#2563eb', line2: '#6b7280',
+      lineFill: 'rgba(37,99,235,.08)', line2Fill: 'rgba(107,114,128,.06)',
       tooltipBg: '#fff', tooltipBorder: '#e5e7eb', tooltipTitle: '#111', tooltipBody: '#6b7280',
-      grid: '#f3f4f6', tick: '#9ca3af', legend: '#6b7280'
+      grid: '#f3f4f6', tick: '#9ca3af', legend: '#6b7280',
+      mono: 'system-ui, sans-serif',
+      palette: ['#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f97316',
+        '#f59e0b', '#eab308', '#22c55e', '#14b8a6', '#06b6d4',
+        '#3b82f6', '#0ea5e9'],
     };
   }
   return {
+    line: '#3b82f6', line2: '#6b7280',
+    lineFill: 'rgba(59,130,246,.08)', line2Fill: 'rgba(107,114,128,.06)',
     tooltipBg: '#1a1a1a', tooltipBorder: '#2a2a2a', tooltipTitle: '#ccc', tooltipBody: '#888',
-    grid: '#1a1a1a', tick: '#555', legend: '#888'
+    grid: '#1a1a1a', tick: '#555', legend: '#888',
+    mono: 'system-ui, sans-serif',
+    palette: ['#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f97316',
+      '#f59e0b', '#eab308', '#22c55e', '#14b8a6', '#06b6d4',
+      '#3b82f6', '#0ea5e9'],
   };
 }
 
@@ -500,6 +1431,27 @@ function p(n) { return String(n).padStart(2, '0'); }
 function localISO(d) { return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
 function n(v) { return v === 0 ? '0' : (v || '-').toLocaleString(); }
 function cachePct(cached, prompt) { return prompt ? ` (${(cached / prompt * 100).toFixed(1)}%)` : ''; }
+
+// 看板模式下大数字做一次缓动计数，默认模式直接写值
+function setNum(el, value) {
+  if (!el) return;
+  const target = Number(value) || 0;
+  const prev = Number(el.dataset.v || 0);
+  el.dataset.v = target;
+  if (!isKanban() || prev === target || !window.requestAnimationFrame) {
+    el.textContent = n(value);
+    return;
+  }
+  const t0 = performance.now();
+  const step = (t) => {
+    const k = Math.min(1, (t - t0) / 620);
+    const e = 1 - Math.pow(1 - k, 4);
+    el.textContent = Math.round(prev + (target - prev) * e).toLocaleString();
+    if (k < 1) requestAnimationFrame(step);
+    else el.textContent = n(value);
+  };
+  requestAnimationFrame(step);
+}
 
 function renderRecent(items) {
   const lang = document.documentElement.getAttribute('data-lang') || 'zh';
@@ -516,7 +1468,7 @@ function renderRecent(items) {
   const modelColor = theme === 'light' ? '#111' : '#ccc';
   tb.innerHTML = items.map(r => {
     const speed = r.duration_ms > 0 ? (r.completion_tokens * 1000 / r.duration_ms).toFixed(1) : '-';
-    return `<tr><td style="color:var(--muted)">${r.request_time.slice(5,19)}</td><td style="color:${modelColor}">${r.model}</td><td>${r.provider}</td><td>${n(r.prompt_tokens)}</td><td>${n(r.completion_tokens)}</td><td>${n(r.cached_tokens)}${cachePct(r.cached_tokens, r.prompt_tokens)}</td><td>${n(r.reasoning_tokens)}</td><td>${speed}</td></tr>`;
+    return `<tr><td style="color:var(--muted)">${escapeHtml(r.request_time.slice(5,19))}</td><td style="color:${modelColor}">${escapeHtml(r.model)}</td><td><span class="prov-dot" style="--dot:${providerColor(r.provider)}"></span>${escapeHtml(r.provider)}</td><td>${n(r.prompt_tokens)}</td><td>${n(r.completion_tokens)}</td><td>${n(r.cached_tokens)}${cachePct(r.cached_tokens, r.prompt_tokens)}</td><td>${n(r.reasoning_tokens)}</td><td>${speed}</td></tr>`;
   }).join('');
 
   let ph = '';
@@ -584,23 +1536,43 @@ function renderChart(timeline, groupBy) {
   const tokens = periods.map(p => merged[p].total_tokens);
   const counts = periods.map(p => merged[p].request_count);
   const c = chartColors();
+  const kanban = isKanban();
 
   if (window._chart) {
+    const ds0 = window._chart.data.datasets[0];
+    const ds1 = window._chart.data.datasets[1];
     window._chart.data.labels = labels;
-    window._chart.data.datasets[0].data = tokens;
-    window._chart.data.datasets[1].data = counts;
-    window._chart.data.datasets[0].label = I18N[lang].token;
-    window._chart.data.datasets[1].label = I18N[lang].requests;
+    ds0.data = tokens;
+    ds1.data = counts;
+    ds0.label = I18N[lang].token;
+    ds1.label = I18N[lang].requests;
+    ds0.borderColor = c.line;
+    ds0.backgroundColor = c.lineFill;
+    ds0.borderWidth = kanban ? 1.6 : 2;
+    ds0.tension = kanban ? .35 : .2;
+    ds0.fill = true;
+    ds1.borderColor = c.line2;
+    ds1.backgroundColor = c.line2Fill;
+    ds1.fill = !kanban;
+    ds1.borderDash = kanban ? [4, 4] : [];
+    ds1.borderWidth = kanban ? 1.1 : 2;
     window._chart.options.plugins.legend.labels.color = c.legend;
+    window._chart.options.plugins.legend.labels.font.family = c.mono;
+    window._chart.options.plugins.legend.labels.usePointStyle = kanban;
     window._chart.options.plugins.tooltip.backgroundColor = c.tooltipBg;
     window._chart.options.plugins.tooltip.titleColor = c.tooltipTitle;
     window._chart.options.plugins.tooltip.bodyColor = c.tooltipBody;
     window._chart.options.plugins.tooltip.borderColor = c.tooltipBorder;
+    window._chart.options.plugins.tooltip.titleFont.family = c.mono;
+    window._chart.options.plugins.tooltip.bodyFont.family = c.mono;
     window._chart.options.scales.x.ticks.color = c.tick;
+    window._chart.options.scales.x.ticks.font.family = c.mono;
     window._chart.options.scales.x.grid.color = c.grid;
     window._chart.options.scales.y.ticks.color = c.tick;
+    window._chart.options.scales.y.ticks.font.family = c.mono;
     window._chart.options.scales.y.grid.color = c.grid;
     window._chart.options.scales.y1.ticks.color = c.tick;
+    window._chart.options.scales.y1.ticks.font.family = c.mono;
     window._chart.update('none');
     return;
   }
@@ -611,28 +1583,28 @@ function renderChart(timeline, groupBy) {
     data: {
       labels,
       datasets: [
-        { label: I18N[lang].token, data: tokens, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,.08)', fill: true, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 20, tension: .2, yAxisID: 'y' },
-        { label: I18N[lang].requests, data: counts, borderColor: '#6b7280', backgroundColor: 'rgba(107,114,128,.06)', fill: true, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 20, tension: .2, yAxisID: 'y1' },
+        { label: I18N[lang].token, data: tokens, borderColor: c.line, backgroundColor: c.lineFill, fill: true, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 20, tension: kanban ? .35 : .2, borderWidth: kanban ? 1.6 : 2, yAxisID: 'y' },
+        { label: I18N[lang].requests, data: counts, borderColor: c.line2, backgroundColor: c.line2Fill, fill: !kanban, borderDash: kanban ? [4, 4] : [], pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 20, tension: kanban ? .35 : .2, borderWidth: kanban ? 1.1 : 2, yAxisID: 'y1' },
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { labels: { color: c.legend, boxWidth: 10, padding: 8, font: { size: 10 } } },
+        legend: { position: 'top', align: kanban ? 'end' : 'center', labels: { color: c.legend, boxWidth: kanban ? 8 : 10, padding: 8, usePointStyle: kanban, font: { size: kanban ? 8 : 10, family: c.mono } } },
         tooltip: {
           backgroundColor: c.tooltipBg, titleColor: c.tooltipTitle, bodyColor: c.tooltipBody,
-          borderColor: c.tooltipBorder, borderWidth: 1, cornerRadius: 6,
-          padding: 10, titleFont: { size: 11 }, bodyFont: { size: 11 },
+          borderColor: c.tooltipBorder, borderWidth: 1, cornerRadius: kanban ? 2 : 6,
+          padding: 10, titleFont: { size: 11, family: c.mono }, bodyFont: { size: 11, family: c.mono },
           callbacks: {
             label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`
           }
         }
       },
       scales: {
-        x: { ticks: { color: c.tick, font: { size: 9 }, maxTicksLimit: 12 }, grid: { color: c.grid } },
-        y: { ticks: { color: c.tick, font: { size: 9 } }, grid: { color: c.grid }, beginAtZero: true },
-        y1: { position: 'right', ticks: { color: c.tick, font: { size: 9 } }, grid: { display: false }, beginAtZero: true },
+        x: { ticks: { color: c.tick, font: { size: kanban ? 8 : 9, family: c.mono }, maxTicksLimit: kanban ? 6 : 12, maxRotation: 0, autoSkipPadding: 14 }, grid: { color: c.grid } },
+        y: { ticks: { color: c.tick, font: { size: kanban ? 8 : 9, family: c.mono } }, grid: { color: c.grid }, beginAtZero: true },
+        y1: { position: 'right', ticks: { color: c.tick, font: { size: kanban ? 8 : 9, family: c.mono } }, grid: { display: false }, beginAtZero: true },
       }
     }
   });
@@ -685,11 +1657,9 @@ function renderModelsChart(timeline, groupBy) {
     return sumB - sumA;
   });
 
-  const palette = [
-    '#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f97316',
-    '#f59e0b', '#eab308', '#22c55e', '#14b8a6', '#06b6d4',
-    '#3b82f6', '#0ea5e9',
-  ];
+  const c = chartColors();
+  const palette = c.palette;
+  const kanban = isKanban();
 
   const ctx = document.getElementById('modelsTrendChart').getContext('2d');
   const theme = document.documentElement.getAttribute('data-theme') || 'dark';
@@ -697,8 +1667,8 @@ function renderModelsChart(timeline, groupBy) {
   const datasets = models.map((model, i) => {
     const color = palette[i % palette.length];
     const gradient = ctx.createLinearGradient(0, 0, 0, 160);
-    gradient.addColorStop(0, theme === 'dark' ? color + '40' : color + '30');
-    gradient.addColorStop(1, theme === 'dark' ? color + '00' : color + '05');
+    gradient.addColorStop(0, theme === 'dark' ? color + '33' : color + '26');
+    gradient.addColorStop(1, theme === 'dark' ? color + '00' : color + '00');
 
     return {
       label: model,
@@ -706,30 +1676,33 @@ function renderModelsChart(timeline, groupBy) {
       borderColor: color,
       backgroundColor: gradient,
       pointRadius: 0,
-      pointHoverRadius: 6,
+      pointHoverRadius: kanban ? 4 : 6,
       pointHoverBackgroundColor: color,
       pointHoverBorderColor: theme === 'dark' ? '#fff' : '#000',
       pointHoverBorderWidth: 2,
       pointHitRadius: 20,
-      tension: 0.4,
-      borderWidth: 2.5,
+      tension: kanban ? 0.32 : 0.4,
+      borderWidth: kanban ? 1.4 : 2.5,
       fill: true,
     };
   });
-
-  const c = chartColors();
 
   if (window._modelsChart) {
     window._modelsChart.data.labels = labels;
     window._modelsChart.data.datasets = datasets;
     window._modelsChart.options.plugins.legend.labels.color = c.legend;
+    window._modelsChart.options.plugins.legend.labels.font.family = c.mono;
     window._modelsChart.options.plugins.tooltip.backgroundColor = c.tooltipBg;
     window._modelsChart.options.plugins.tooltip.titleColor = c.tooltipTitle;
     window._modelsChart.options.plugins.tooltip.bodyColor = c.tooltipBody;
     window._modelsChart.options.plugins.tooltip.borderColor = c.tooltipBorder;
+    window._modelsChart.options.plugins.tooltip.titleFont.family = c.mono;
+    window._modelsChart.options.plugins.tooltip.bodyFont.family = c.mono;
     window._modelsChart.options.scales.x.ticks.color = c.tick;
+    window._modelsChart.options.scales.x.ticks.font.family = c.mono;
     window._modelsChart.options.scales.x.grid.color = c.grid;
     window._modelsChart.options.scales.y.ticks.color = c.tick;
+    window._modelsChart.options.scales.y.ticks.font.family = c.mono;
     window._modelsChart.options.scales.y.grid.color = c.grid;
     window._modelsChart.update('none');
     return;
@@ -747,9 +1720,9 @@ function renderModelsChart(timeline, groupBy) {
           align: 'start',
           labels: {
             color: c.legend,
-            boxWidth: 12,
-            padding: 12,
-            font: { size: 11, weight: '500' },
+            boxWidth: kanban ? 8 : 12,
+            padding: kanban ? 8 : 12,
+            font: { size: kanban ? 8 : 11, weight: '500', family: c.mono },
             usePointStyle: true,
             pointStyle: 'circle',
           }
@@ -760,10 +1733,10 @@ function renderModelsChart(timeline, groupBy) {
           bodyColor: c.tooltipBody,
           borderColor: c.tooltipBorder,
           borderWidth: 1,
-          cornerRadius: 8,
-          padding: 12,
-          titleFont: { size: 12, weight: '600' },
-          bodyFont: { size: 11 },
+          cornerRadius: kanban ? 2 : 8,
+          padding: kanban ? 9 : 12,
+          titleFont: { size: kanban ? 10 : 12, weight: '600', family: c.mono },
+          bodyFont: { size: kanban ? 9 : 11, family: c.mono },
           displayColors: true,
           boxWidth: 8,
           boxHeight: 8,
@@ -775,11 +1748,11 @@ function renderModelsChart(timeline, groupBy) {
       },
       scales: {
         x: {
-          ticks: { color: c.tick, font: { size: 10 }, maxTicksLimit: 12 },
+          ticks: { color: c.tick, font: { size: kanban ? 8 : 10, family: c.mono }, maxTicksLimit: kanban ? 6 : 12, maxRotation: 0, autoSkipPadding: 14 },
           grid: { color: c.grid, drawBorder: false }
         },
         y: {
-          ticks: { color: c.tick, font: { size: 10 } },
+          ticks: { color: c.tick, font: { size: kanban ? 8 : 10, family: c.mono } },
           grid: { color: c.grid, drawBorder: false },
           beginAtZero: true
         },
@@ -806,10 +1779,61 @@ function updateMom(id, current, prev) {
     return;
   }
   const ratio = ((current - prev) / prev) * 100;
-  const sign = ratio > 0 ? '+' : '';
-  el.textContent = `${sign}${ratio.toFixed(1)}%`;
-  el.className = 'mom';
+  const abs = Math.abs(ratio);
+  const arrow = ratio > 0 ? '+' : (ratio < 0 ? '−' : '');
+  const shown = abs >= 1000 ? '>999%' : `${arrow}${abs >= 100 ? abs.toFixed(0) : abs.toFixed(1)}%`;
+  el.textContent = abs === 0 ? '—' : shown;
+  el.className = 'mom' + (ratio > 0 ? ' up' : ratio < 0 ? ' down' : '');
   el.style.display = 'block';
+}
+
+function renderBreakdown(el, data, nameLabel, lang) {
+  const entries = Object.entries(data || {});
+  if (entries.length === 0) {
+    el.innerHTML = `<div class="empty">${I18N[lang].empty}</div>`;
+    return;
+  }
+  entries.sort((a, b) => (b[1].month_used || 0) - (a[1].month_used || 0));
+
+  if (!isKanban()) {
+    let html = `<table><thead><tr><th>${nameLabel}</th><th style="text-align:right">${I18N[lang].statRequests}</th><th style="text-align:right">${I18N[lang].statInput}</th><th style="text-align:right">${I18N[lang].statOutput}</th><th style="text-align:right">${I18N[lang].colCache}</th><th style="text-align:right">${I18N[lang].colReasoning}</th><th style="text-align:right">${I18N[lang].statSpeed}</th></tr></thead><tbody>`;
+    for (const [name, b] of entries) {
+      html += `<tr>
+        <td style="color:var(--heading)">${escapeHtml(name)}</td>
+        <td style="text-align:right">${n(b.month_used)}</td>
+        <td style="text-align:right">${n(b.prompt_tokens)}</td>
+        <td style="text-align:right">${n(b.completion_tokens)}</td>
+        <td style="text-align:right">${n(b.cached_tokens)}${cachePct(b.cached_tokens, b.prompt_tokens)}</td>
+        <td style="text-align:right">${n(b.reasoning_tokens)}</td>
+        <td style="text-align:right">${b.tokens_per_second > 0 ? b.tokens_per_second.toFixed(1) : '-'}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    el.innerHTML = html;
+    return;
+  }
+
+  const max = Math.max(...entries.map(([, b]) => b.month_used || 0), 1);
+  const cacheRate = b => b.prompt_tokens ? `${(b.cached_tokens / b.prompt_tokens * 100).toFixed(0)}%` : '—';
+  el.innerHTML = `<div class="rank-list">` + entries.map(([name, b], i) => {
+    const width = Math.max(3, Math.round((b.month_used || 0) / max * 100));
+    return `<div class="rank-row">
+      <div class="rank-index">${String(i + 1).padStart(2, '0')}</div>
+      <div class="rank-body">
+        <div class="rank-top">
+          <span class="rank-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+          <span class="rank-total">${n(b.month_used)}</span>
+        </div>
+        <div class="rank-bar"><i style="width:${width}%"></i></div>
+        <div class="rank-meta">
+          <span>${n(b.prompt_tokens)} in</span>
+          <span>${n(b.completion_tokens)} out</span>
+          <span>cache ${cacheRate(b)}</span>
+          <span>${b.tokens_per_second > 0 ? b.tokens_per_second.toFixed(1) : '—'} t/s</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('') + '</div>';
 }
 
 function fetchAll() {
@@ -866,9 +1890,9 @@ function fetchAll() {
 
   Promise.all([mainPromise, prevPromise]).then(([d, pd]) => {
     const lang = document.documentElement.getAttribute('data-lang') || 'zh';
-    document.getElementById('totalRequests').textContent = n(d.totals.request_count);
-    document.getElementById('promptTokens').textContent = n(d.totals.prompt_tokens);
-    document.getElementById('completionTokens').textContent = n(d.totals.completion_tokens);
+    setNum(document.getElementById('totalRequests'), d.totals.request_count);
+    setNum(document.getElementById('promptTokens'), d.totals.prompt_tokens);
+    setNum(document.getElementById('completionTokens'), d.totals.completion_tokens);
     const statsEmpty = document.querySelector('.stats-empty');
     const statCards = document.querySelectorAll('.stats > .stat');
     const allZero = !d.totals.request_count && !d.totals.prompt_tokens && !d.totals.completion_tokens;
@@ -882,51 +1906,8 @@ function fetchAll() {
     updateMom('promptTokensMom', d.totals.prompt_tokens, pd.totals.prompt_tokens);
     updateMom('completionTokensMom', d.totals.completion_tokens, pd.totals.completion_tokens);
 
-    const bl = document.getElementById('billingList');
-    const billing = d.billing || {};
-    const entries = Object.entries(billing);
-    if (entries.length === 0) {
-      bl.innerHTML = '<div class="empty">' + (I18N[lang].empty) + '</div>';
-    } else {
-      entries.sort((a, b) => b[1].month_used - a[1].month_used);
-      let html = `<table><thead><tr><th>${I18N[lang].colProvider}</th><th style="text-align:right">${I18N[lang].statRequests}</th><th style="text-align:right">${I18N[lang].statInput}</th><th style="text-align:right">${I18N[lang].statOutput}</th><th style="text-align:right">缓存命中</th><th style="text-align:right">推理</th><th style="text-align:right">${I18N[lang].statSpeed}</th></tr></thead><tbody>`;
-      for (const [prov, b] of entries) {
-        html += `<tr>
-          <td style="color:var(--heading)">${prov}</td>
-          <td style="text-align:right">${n(b.month_used)}</td>
-          <td style="text-align:right">${n(b.prompt_tokens)}</td>
-          <td style="text-align:right">${n(b.completion_tokens)}</td>
-          <td style="text-align:right">${n(b.cached_tokens)}${cachePct(b.cached_tokens, b.prompt_tokens)}</td>
-          <td style="text-align:right">${n(b.reasoning_tokens)}</td>
-          <td style="text-align:right">${b.tokens_per_second > 0 ? b.tokens_per_second.toFixed(1) : '-'}</td>
-        </tr>`;
-      }
-      html += '</tbody></table>';
-      bl.innerHTML = html;
-    }
-
-    const ml = document.getElementById('modelUsageList');
-    const billingModel = d.billing_model || {};
-    const modelEntries = Object.entries(billingModel);
-    if (modelEntries.length === 0) {
-      ml.innerHTML = '<div class="empty">' + (I18N[lang].empty) + '</div>';
-    } else {
-      modelEntries.sort((a, b) => b[1].month_used - a[1].month_used);
-      let mhtml = `<table><thead><tr><th>${I18N[lang].colModel}</th><th style="text-align:right">${I18N[lang].statRequests}</th><th style="text-align:right">${I18N[lang].statInput}</th><th style="text-align:right">${I18N[lang].statOutput}</th><th style="text-align:right">缓存命中</th><th style="text-align:right">推理</th><th style="text-align:right">${I18N[lang].statSpeed}</th></tr></thead><tbody>`;
-      for (const [mdl, b] of modelEntries) {
-        mhtml += `<tr>
-          <td style="color:var(--heading)">${mdl}</td>
-          <td style="text-align:right">${n(b.month_used)}</td>
-          <td style="text-align:right">${n(b.prompt_tokens)}</td>
-          <td style="text-align:right">${n(b.completion_tokens)}</td>
-          <td style="text-align:right">${n(b.cached_tokens)}${cachePct(b.cached_tokens, b.prompt_tokens)}</td>
-          <td style="text-align:right">${n(b.reasoning_tokens)}</td>
-          <td style="text-align:right">${b.tokens_per_second > 0 ? b.tokens_per_second.toFixed(1) : '-'}</td>
-        </tr>`;
-      }
-      mhtml += '</tbody></table>';
-      ml.innerHTML = mhtml;
-    }
+    renderBreakdown(document.getElementById('billingList'), d.billing, I18N[lang].colProvider, lang);
+    renderBreakdown(document.getElementById('modelUsageList'), d.billing_model, I18N[lang].colModel, lang);
   });
 }
 
@@ -1131,11 +2112,13 @@ document.querySelectorAll('[data-range]').forEach(btn => {
 });
 
 initPrefs();
+tickClock();
 
 fetchAll();
 fetchRecent(1);
 resetInsightsToStart();
 
+setInterval(tickClock, 1000);
 setInterval(() => { fetchAll(); fetchRecent(page); }, 15000);
 
 function downloadDb() {
