@@ -29,7 +29,7 @@
 - 验证打包产物是否可启动：Start-Process exe → 检查进程存活 + `Get-NetTCPConnection -LocalPort 6770` + `Invoke-WebRequest http://localhost:6770` HTTP 200
 - 单文件 PyInstaller 进程树：托盘(PID A) → bootloader 子进程(PID B) → worker(PID C, --worker 参数)
 
-## 当前任务：看板模式重做「黑曜石账本」（v0.6.32，2026-10-26）
+## 当前任务：看板模式重做「黑曜石账本」（v0.6.32–0.6.33，2026-10-26 已部署）
 - 设计语言：年报式克制排版——Bodoni Moda 巨大衬线数字 + 黄铜点缀 + 发丝线 + 01–06 编号 + 四角裁切标记 + 胶片颗粒；浅色为象牙纸版本
 - 结构：报头（双线 + 刻度尺）→ 头版主指标（6/3/3 分栏，主数字 122px）→ 趋势/平台/模型/排名/流水/分析六块
 - 交互：区间改下划线 tab；主数字 620ms 缓动计数；卡片 hover 顶部铜线扫入
