@@ -21,7 +21,8 @@
 - 远程诊断常用组合：`py-spy dump --pid`、`/proc/PID/task/*/schedstat`、`/proc/PID/stat` 的 utime/stime、`/proc/PID/stat` 的 minflt、`cgroup memory.events`（看 `high`/`max` 是否在涨）
 - **Jinja 模板有缓存**（`TEMPLATES_AUTO_RELOAD` 未开）：改完 `templates/index.html` 必须重启进程才生效，否则会对着旧页面调样式。
 - **headless 截图必须加 `--force-prefers-reduced-motion`**：`--virtual-time-budget` 不推进 CSS 动画，`animation-fill-mode: both` 的元素会停在 opacity 0，看起来像「面板消失」；加了才会渲染真实布局。
-- **`grid-template-rows` 写死行数很脆**：窄屏媒体查询里把列数改掉后，多出来的面板会进隐式行，高度塌成 0 全部叠在一起。换布局时必须同时重置成 `grid-template-rows: none` + `grid-auto-rows`。
+- **`grid-template-rows` 写死行数很脆**：窄屏媒体查询里把列数改掉后，多出来的面板会进隐式行，高度塌成 0 全部叠在一起。换布局时必须同时重置成 `grid-template-rows: none` + `grid-auto-rows`。更根本的坑：用 `grid-template-areas` 按行号把面板「钉」在四行里，用户隐藏任意面板（`ag_sections`）后网格自动补位，整块版面就错行成阶梯。**面板位置只能由 DOM/列归属决定，不能让网格行号隐式表达位置**（v0.6.34 改为 stats + colA/colB 两行，列内 flex 均分）。
+- **`height:100dvh` + `minmax(0,1fr)` 会压扁内容**：视口矮（1366×900）时主区被压到 min-content 以下再 `overflow:hidden`，面板直接被裁。改 `min-height:100dvh` + `minmax(min-content,1fr)` + `body` 可滚动：够高时满屏不滚，不够高时整页滚，两者兼得。
 - **前端不依赖外部 CDN**：Google Fonts 与 chart.js 同类问题（不可达会长时间白屏）。字体已自托管在 `static/fonts/`（Bodoni Moda / Jost / IBM Plex Mono，约 100KB），spec 里 `('static','static')` 已整目录打包，新增字体无需改 spec。
 - **大 body SSE 中文乱码 + `Unterminated string`**（v0.6.31 已解决）：`_proxy_stateless` 用 `requests.iter_lines(decode_unicode=True)` 但没设 `resp.encoding`；无 charset 的 `text/event-stream` 被 requests 按 ISO-8859-1 解码，中文变 mojibake，汉字 UTF-8 中间字节 `0x85`（先/全）变 `U+0085` 后被 `str.splitlines()` 当换行，把 JSON 劈成半截。教训：**SSE 框架只能按 `b"\n"` 字节分行并原样透传，不能依赖 `iter_lines()` + `splitlines()`**。已部署 0.6.31（`/api/health` 验证）。
 
@@ -29,13 +30,15 @@
 - 验证打包产物是否可启动：Start-Process exe → 检查进程存活 + `Get-NetTCPConnection -LocalPort 6770` + `Invoke-WebRequest http://localhost:6770` HTTP 200
 - 单文件 PyInstaller 进程树：托盘(PID A) → bootloader 子进程(PID B) → worker(PID C, --worker 参数)
 
-## 当前任务：看板模式重做「黑曜石账本」（v0.6.32–0.6.33，2026-10-26 已部署）
+## 当前任务：看板模式重做「黑曜石账本」（v0.6.32–0.6.34，2026-10-26 已部署）
 - 设计语言：年报式克制排版——Bodoni Moda 巨大衬线数字 + 黄铜点缀 + 发丝线 + 01–06 编号 + 四角裁切标记 + 胶片颗粒；浅色为象牙纸版本
-- 结构：报头（双线 + 刻度尺）→ 头版主指标（6/3/3 分栏，主数字 122px）→ 趋势/平台/模型/排名/流水/分析六块
-- 交互：区间改下划线 tab；主数字 620ms 缓动计数；卡片 hover 顶部铜线扫入
+- 结构（0.6.34 起）：报头（双线 + 刻度尺）→ 头版主指标（6/3/3 分栏，主数字 122px）→ **左 3 / 右 3 两栏**（左：用量趋势/模型趋势/最近请求；右：各平台/各模型/活动分析），隐藏任一面板不破坏另一列排布
+- 默认模式（`/`）靠 `.kanban-main{display:flex}` + 两列 `display:contents` + `order` 保持原单列顺序
+- 交互：区间改下划线 tab；主数字 620ms 缓动计数；卡片 hover 顶部铜线扫入；排名行「进度条即行分隔线」
 - 路由：`/dashboard` 默认进看板，支持 `?layout=` / `?theme=` 深链
 - 字体自托管，已去掉 Google Fonts 外链
-- 关键坑见上（模板缓存 / reduced-motion 截图 / grid 行数）
+- 字号基线：表 11.5px / 表头 8.5px / 排名值 21px / 排名副信息 9.5px / 图表刻度 10px / 图例 9.5px / 面板标题 9.5px
+- 关键坑见上（模板缓存 / reduced-motion 截图 / grid 行号定位置 / dvh 压扁）
 
 ## 上一任务：大 body 触发全站 504 的修复（v0.6.30，2026-10-22 已部署）
 - 根因：43.9MB 请求体（正常 0.4~0.8MB）→ 解析 + `json.dumps` 持 GIL → 32 线程全卡 → 连 `GET /` 都 504
