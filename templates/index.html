@@ -39,6 +39,7 @@
   --k-surface: rgba(21, 18, 14, .60);
   --k-surface-hover: rgba(28, 24, 19, .78);
   --k-surface-2: rgba(13, 11, 8, .96);
+  --k-head-bg: #12100c;
   --k-border: rgba(240, 231, 214, .085);
   --k-border-strong: rgba(240, 231, 214, .21);
   --k-text: #f2ebdd;
@@ -81,6 +82,7 @@
   --k-surface: rgba(255, 252, 245, .62);
   --k-surface-hover: rgba(255, 253, 248, .84);
   --k-surface-2: rgba(255, 253, 247, .96);
+  --k-head-bg: #fbf8f1;
   --k-border: rgba(30, 24, 14, .13);
   --k-border-strong: rgba(30, 24, 14, .28);
   --k-text: #17130c;
@@ -767,7 +769,7 @@ td:last-child, th:last-child { text-align: right; }
   top: 0;
   z-index: 2;
   padding: 8px 10px;
-  background: var(--k-surface-2);
+  background: var(--k-head-bg);
   border-bottom: 1px solid var(--k-border-strong);
   color: var(--k-dim);
   font-size: 7.5px;
@@ -1243,7 +1245,9 @@ function hexA(hex, alpha) {
 }
 
 function providerColor(name) {
-  const palette = ['#d8ff3e', '#ff8a5c', '#7ee7c7', '#8fb4ff', '#f5c56b', '#c7a6ff'];
+  const palette = isKanban()
+    ? ['#e7cf9c', '#d9a15b', '#c9703f', '#9fbb8a', '#8fa9c9', '#b49ac9', '#c9a227', '#7fb3a8']
+    : ['#d8ff3e', '#ff8a5c', '#7ee7c7', '#8fb4ff', '#f5c56b', '#c7a6ff'];
   let h = 0;
   for (const ch of String(name || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return palette[h % palette.length];
