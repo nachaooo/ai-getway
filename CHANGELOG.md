@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.35] - 2026-10-27
+
+### Changed
+- **看板数据数字改用正文字体 Jost，不再用衬线 Bodoni Moda**（用户反馈「`var(--font-display)` 看起来费劲，`var(--font-body)` 舒服」）。
+  - 影响三处：头版主指标（`118px` 主数字与两个副指标）、排名面板数值（21px）、活动分析标题数字（19px）。
+  - 数字属信息载体，优先可读性：Jost 为几何无衬线，500 字重 + `tabular-nums` 对齐稳定；同时把主数字行高 `.86 → 1`、字距 `-.035em → -.02em`（衬线的紧凑参数放到无衬线上会显得挤）。
+  - **字标「AI Gateway」保留 Bodoni Moda**：它是版面识别符号、字号 54px，不存在小字难读问题；`static/fonts/bodoni-normal-400_800.woff2` 与 `<link rel=preload>` 继续保留。
+  - 默认模式（`/`）本来就是系统无衬线，本次改动后两种模式的数据字体观感统一。
+- 涉及文件：`templates/index.html`（4 处 `--font-display` 中的 3 处改为 `--font-body`，并调整字重/行高/字距）。无 API、无 DB 变更；66 个单测通过。
+
 ## [0.6.34] - 2026-10-26
 
 ### Fixed
