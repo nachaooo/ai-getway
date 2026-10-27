@@ -24,6 +24,7 @@
 - **headless 截图必须加 `--force-prefers-reduced-motion`**：`--virtual-time-budget` 不推进 CSS 动画，`animation-fill-mode: both` 的元素会停在 opacity 0，看起来像「面板消失」；加了才会渲染真实布局。
 - **`grid-template-rows` 写死行数很脆**：窄屏媒体查询里把列数改掉后，多出来的面板会进隐式行，高度塌成 0 全部叠在一起。换布局时必须同时重置成 `grid-template-rows: none` + `grid-auto-rows`。更根本的坑：用 `grid-template-areas` 按行号把面板「钉」在四行里，用户隐藏任意面板（`ag_sections`）后网格自动补位，整块版面就错行成阶梯。**面板位置只能由 DOM/列归属决定，不能让网格行号隐式表达位置**（v0.6.34 改为 stats + colA/colB 两行，列内 flex 均分）。
 - **`height:100dvh` + `minmax(0,1fr)` 会压扁内容**：视口矮（1366×900）时主区被压到 min-content 以下再 `overflow:hidden`，面板直接被裁。改 `min-height:100dvh` + `minmax(min-content,1fr)` + `body` 可滚动：够高时满屏不滚，不够高时整页滚，两者兼得。
+- **「刷新像重绘」的三个来源**：①`innerHTML` 整块重建会让内部的 CSS 入场动画（如进度条 `animation: scaleX`）每次重播；②`chart.update('none')` 是瞬间跳值不插值；③模型图按「排序下标」取色，名次一变换色=看起来整块刷新。对策：按业务键（`data-name`）就地更新 + `width/transform` 过渡、`update()` 加 `animation:{duration,easing}`、颜色按模型名映射。**列表类面板不要每次刷新重建 DOM。**
 - **前端不依赖外部 CDN**：Google Fonts 与 chart.js 同类问题（不可达会长时间白屏）。字体已自托管在 `static/fonts/`（Bodoni Moda / Jost / IBM Plex Mono，约 100KB），spec 里 `('static','static')` 已整目录打包，新增字体无需改 spec。
 - **大 body SSE 中文乱码 + `Unterminated string`**（v0.6.31 已解决）：`_proxy_stateless` 用 `requests.iter_lines(decode_unicode=True)` 但没设 `resp.encoding`；无 charset 的 `text/event-stream` 被 requests 按 ISO-8859-1 解码，中文变 mojibake，汉字 UTF-8 中间字节 `0x85`（先/全）变 `U+0085` 后被 `str.splitlines()` 当换行，把 JSON 劈成半截。教训：**SSE 框架只能按 `b"\n"` 字节分行并原样透传，不能依赖 `iter_lines()` + `splitlines()`**。已部署 0.6.31（`/api/health` 验证）。
 
