@@ -6,6 +6,7 @@
 - 版本号只在 `app.py` 的 `VERSION = "x.y.z"` 维护，构建时 `scripts/bump_version.py` 自动升 patch
 - 打包入口是 `main.py`（托盘模式），spec 中 `console=False`
 - 路径双目录约定：`_EXE_DIR`（exe 目录，可写，放 config.json/logs）、`_RES_DIR`（frozen 时为 `sys._MEIPASS`，放打包资源 static/templates/tokenizers），`app.py` 中对应 `EXE_DIR`/`RESOURCE_DIR`
+- 字体取舍（用户偏好）：**数据数字一律用 `--font-body`（Jost）**，衬线 `--font-display`（Bodoni Moda）只保留给字标「AI Gateway」。用户原话「display 看起来费劲，body 舒服」；字距/行高要按无衬线重新调（`-.035em`/`.86` 那套衬线参数会显得挤）
 
 ## 踩过的坑
 - ~~修复托盘启动 NameError~~（v0.6.12 已解决）：提交 880977d 移除 `BASE` 定义但残留 7 处引用，导致 frozen 托盘模式模块级代码 `ICON_PNG = os.path.join(BASE,...)` 立即 `NameError` 崩溃，`console=False` 下表现为"双击无反应"。教训：删全局变量时要全局搜索引用。
