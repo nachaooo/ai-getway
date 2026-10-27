@@ -565,6 +565,24 @@ td:last-child, th:last-child { text-align: right; }
 }
 [data-layout="kanban"] .stat .mom.up { color: var(--k-up); }
 [data-layout="kanban"] .stat .mom.down { color: var(--k-down); }
+/* ── 数字滚动（odometer）：数字列上下滚动，分隔符保持不动 ──── */
+[data-layout="kanban"] .nroll { display: flex; align-items: flex-start; }
+[data-layout="kanban"] .nroll .nc { flex: 0 0 auto; }
+[data-layout="kanban"] .nroll .nd {
+  position: relative;
+  flex: 0 0 auto;
+  width: 1ch;
+  height: 1em;
+  overflow: hidden;
+}
+[data-layout="kanban"] .nroll .strip { display: block; will-change: transform; }
+[data-layout="kanban"] .nroll .strip > span {
+  display: block;
+  height: 1em;
+  line-height: 1;
+  text-align: center;
+}
+
 [data-layout="kanban"] .stats-empty {
   grid-column: 1 / -1;
   align-items: center;
@@ -768,8 +786,7 @@ td:last-child, th:last-child { text-align: right; }
   display: block;
   height: 100%;
   background: linear-gradient(90deg, var(--k-accent), var(--k-ember));
-  transform-origin: left;
-  animation: k-bar 1s cubic-bezier(.16, .8, .24, 1) both;
+  transition: width .8s cubic-bezier(.16, .8, .24, 1), background-color .3s;
 }
 [data-layout="kanban"] .rank-meta {
   display: flex;
@@ -917,10 +934,6 @@ td:last-child, th:last-child { text-align: right; }
 [data-layout="kanban"] #modelUsageList::-webkit-scrollbar-corner,
 [data-layout="kanban"] #insightsList::-webkit-scrollbar-corner { background: transparent; }
 
-@keyframes k-bar {
-  from { transform: scaleX(0); }
-  to { transform: scaleX(1); }
-}
 @keyframes k-pulse {
   0% { box-shadow: 0 0 0 0 var(--k-glow-1); }
   70%, 100% { box-shadow: 0 0 0 8px transparent; }
@@ -1464,25 +1477,61 @@ function localISO(d) { return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.get
 function n(v) { return v === 0 ? '0' : (v || '-').toLocaleString(); }
 function cachePct(cached, prompt) { return prompt ? ` (${(cached / prompt * 100).toFixed(1)}%)` : ''; }
 
-// 看板模式下大数字做一次缓动计数，默认模式直接写值
+// 看板模式下数字做「里程表」滚动：每位数字沿列上下滚动到新值
+const REDUCED_MOTION = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+function digitStrip(from, to) {
+  if (from === to) return { html: `<span>${to}</span>`, steps: 0, dur: 0 };
+  const step = to > from ? 1 : -1;
+  const seq = [];
+  for (let d = from; ; d += step) { seq.push(d); if (d === to) break; }
+  return {
+    html: seq.map(d => `<span>${d}</span>`).join(''),
+    steps: seq.length - 1,
+    dur: Math.min(760, 240 + (seq.length - 1) * 70),
+  };
+}
+
+function rollNum(el, prev, target) {
+  const prevText = Math.abs(Number(prev) || 0).toLocaleString();
+  const text = Math.abs(Number(target) || 0).toLocaleString();
+  const prevDigits = prevText.replace(/\D/g, '').split('').reverse();
+  const chars = text.split('');
+  const digitCount = chars.filter(c => /\d/.test(c)).length;
+  const plans = [];
+  let seen = 0;
+  let html = '<span class="nroll">';
+  for (const ch of chars) {
+    if (!/\d/.test(ch)) { html += `<span class="nc">${ch}</span>`; continue; }
+    const from = Number(prevDigits[digitCount - 1 - seen] ?? 0);
+    seen++;
+    const strip = digitStrip(from, Number(ch));
+    plans.push(strip);
+    html += `<span class="nd"><span class="strip">${strip.html}</span></span>`;
+  }
+  el.innerHTML = html + '</span>';
+  if (!plans.some(s => s.steps > 0)) return;
+  requestAnimationFrame(() => {
+    el.querySelectorAll('.nroll .nd .strip').forEach((stripEl, i) => {
+      const plan = plans[i];
+      if (!plan || !plan.steps) return;
+      stripEl.style.transition = `transform ${plan.dur}ms cubic-bezier(.22,.61,.36,1)`;
+      stripEl.style.transform = `translateY(${-plan.steps}em)`;
+    });
+  });
+}
+
 function setNum(el, value) {
   if (!el) return;
   const target = Number(value) || 0;
   const prev = Number(el.dataset.v || 0);
   el.dataset.v = target;
-  if (!isKanban() || prev === target || !window.requestAnimationFrame) {
+  if (!isKanban() || REDUCED_MOTION || !window.requestAnimationFrame) {
     el.textContent = n(value);
     return;
   }
-  const t0 = performance.now();
-  const step = (t) => {
-    const k = Math.min(1, (t - t0) / 620);
-    const e = 1 - Math.pow(1 - k, 4);
-    el.textContent = Math.round(prev + (target - prev) * e).toLocaleString();
-    if (k < 1) requestAnimationFrame(step);
-    else el.textContent = n(value);
-  };
-  requestAnimationFrame(step);
+  if (prev === target && el.querySelector('.nroll')) return;
+  rollNum(el, prev, target);
 }
 
 function renderRecent(items) {
@@ -1605,7 +1654,7 @@ function renderChart(timeline, groupBy) {
     window._chart.options.scales.y.grid.color = c.grid;
     window._chart.options.scales.y1.ticks.color = c.tick;
     window._chart.options.scales.y1.ticks.font.family = c.mono;
-    window._chart.update('none');
+    window._chart.update();
     return;
   }
 
@@ -1621,6 +1670,7 @@ function renderChart(timeline, groupBy) {
     },
     options: {
       responsive: true, maintainAspectRatio: false,
+      animation: { duration: 680, easing: 'easeOutQuart' },
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { position: 'top', align: kanban ? 'end' : 'center', labels: { color: c.legend, boxWidth: kanban ? 8 : 10, padding: 10, usePointStyle: kanban, font: { size: kanban ? 9.5 : 10, family: c.mono } } },
@@ -1696,12 +1746,20 @@ function renderModelsChart(timeline, groupBy) {
   const ctx = document.getElementById('modelsTrendChart').getContext('2d');
   const theme = document.documentElement.getAttribute('data-theme') || 'dark';
 
-  const datasets = models.map((model, i) => {
-    const color = palette[i % palette.length];
+  // 颜色按模型名固定：刷新后同名模型不会换色
+  if (!window._modelColors) window._modelColors = new Map();
+  const colorFor = (model) => {
+    if (!window._modelColors.has(model)) {
+      window._modelColors.set(model, palette[window._modelColors.size % palette.length]);
+    }
+    return window._modelColors.get(model);
+  };
+
+  const makeDataset = (model) => {
+    const color = colorFor(model);
     const gradient = ctx.createLinearGradient(0, 0, 0, 160);
     gradient.addColorStop(0, theme === 'dark' ? color + '33' : color + '26');
     gradient.addColorStop(1, theme === 'dark' ? color + '00' : color + '00');
-
     return {
       label: model,
       data: periods.map(p => modelData[model][p] || 0),
@@ -1717,34 +1775,47 @@ function renderModelsChart(timeline, groupBy) {
       borderWidth: kanban ? 1.4 : 2.5,
       fill: true,
     };
-  });
+  };
 
   if (window._modelsChart) {
-    window._modelsChart.data.labels = labels;
-    window._modelsChart.data.datasets = datasets;
-    window._modelsChart.options.plugins.legend.labels.color = c.legend;
-    window._modelsChart.options.plugins.legend.labels.font.family = c.mono;
-    window._modelsChart.options.plugins.tooltip.backgroundColor = c.tooltipBg;
-    window._modelsChart.options.plugins.tooltip.titleColor = c.tooltipTitle;
-    window._modelsChart.options.plugins.tooltip.bodyColor = c.tooltipBody;
-    window._modelsChart.options.plugins.tooltip.borderColor = c.tooltipBorder;
-    window._modelsChart.options.plugins.tooltip.titleFont.family = c.mono;
-    window._modelsChart.options.plugins.tooltip.bodyFont.family = c.mono;
-    window._modelsChart.options.scales.x.ticks.color = c.tick;
-    window._modelsChart.options.scales.x.ticks.font.family = c.mono;
-    window._modelsChart.options.scales.x.grid.color = c.grid;
-    window._modelsChart.options.scales.y.ticks.color = c.tick;
-    window._modelsChart.options.scales.y.ticks.font.family = c.mono;
-    window._modelsChart.options.scales.y.grid.color = c.grid;
-    window._modelsChart.update('none');
+    const chart = window._modelsChart;
+    const prevDs = new Map(chart.data.datasets.map(d => [d.label, d]));
+    chart.data.labels = labels;
+    chart.data.datasets = models.map((model) => {
+      const ds = prevDs.get(model);
+      if (!ds) return makeDataset(model);
+      const next = makeDataset(model);
+      ds.data = next.data;
+      ds.borderColor = next.borderColor;
+      ds.backgroundColor = next.backgroundColor;
+      ds.borderWidth = next.borderWidth;
+      ds.tension = next.tension;
+      return ds;
+    });
+    chart.options.plugins.legend.labels.color = c.legend;
+    chart.options.plugins.legend.labels.font.family = c.mono;
+    chart.options.plugins.tooltip.backgroundColor = c.tooltipBg;
+    chart.options.plugins.tooltip.titleColor = c.tooltipTitle;
+    chart.options.plugins.tooltip.bodyColor = c.tooltipBody;
+    chart.options.plugins.tooltip.borderColor = c.tooltipBorder;
+    chart.options.plugins.tooltip.titleFont.family = c.mono;
+    chart.options.plugins.tooltip.bodyFont.family = c.mono;
+    chart.options.scales.x.ticks.color = c.tick;
+    chart.options.scales.x.ticks.font.family = c.mono;
+    chart.options.scales.x.grid.color = c.grid;
+    chart.options.scales.y.ticks.color = c.tick;
+    chart.options.scales.y.ticks.font.family = c.mono;
+    chart.options.scales.y.grid.color = c.grid;
+    chart.update();
     return;
   }
 
   window._modelsChart = new Chart(ctx, {
     type: 'line',
-    data: { labels, datasets },
+    data: { labels, datasets: models.map(makeDataset) },
     options: {
       responsive: true, maintainAspectRatio: false,
+      animation: { duration: 680, easing: 'easeOutQuart' },
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: {
@@ -1847,16 +1918,44 @@ function renderBreakdown(el, data, nameLabel, lang) {
 
   const max = Math.max(...entries.map(([, b]) => b.month_used || 0), 1);
   const cacheRate = b => b.prompt_tokens ? `${(b.cached_tokens / b.prompt_tokens * 100).toFixed(0)}%` : '—';
+  const widthOf = b => Math.max(3, Math.round((b.month_used || 0) / max * 100));
+
+  // 名次/条目没变时原地更新，避免整块 innerHTML 重绘（进度条也不再每次从头动画）
+  const list = el.querySelector('.rank-list');
+  const rows = list ? Array.from(list.querySelectorAll('.rank-row')) : [];
+  const byName = new Map(rows.map(r => [r.dataset.name, r]));
+  if (list && rows.length === entries.length && entries.every(([name]) => byName.has(name))) {
+    entries.forEach(([name, b], i) => {
+      const row = byName.get(name);
+      row.querySelector('.rank-index').textContent = String(i + 1).padStart(2, '0');
+      const total = row.querySelector('.rank-total');
+      const prev = Number(total.dataset.v || 0);
+      const now = b.month_used || 0;
+      total.dataset.v = now;
+      if (prev !== now) {
+        if (REDUCED_MOTION) total.textContent = n(now);
+        else rollNum(total, prev, now);
+      }
+      row.querySelector('.rank-bar i').style.width = widthOf(b) + '%';
+      const meta = row.querySelectorAll('.rank-meta span');
+      meta[0].textContent = `${n(b.prompt_tokens)} in`;
+      meta[1].textContent = `${n(b.completion_tokens)} out`;
+      meta[2].textContent = `cache ${cacheRate(b)}`;
+      meta[3].textContent = `${b.tokens_per_second > 0 ? b.tokens_per_second.toFixed(1) : '—'} t/s`;
+      list.appendChild(row);
+    });
+    return;
+  }
+
   el.innerHTML = `<div class="rank-list">` + entries.map(([name, b], i) => {
-    const width = Math.max(3, Math.round((b.month_used || 0) / max * 100));
-    return `<div class="rank-row">
+    return `<div class="rank-row" data-name="${escapeHtml(name)}">
       <div class="rank-index">${String(i + 1).padStart(2, '0')}</div>
       <div class="rank-body">
         <div class="rank-top">
           <span class="rank-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
-          <span class="rank-total">${n(b.month_used)}</span>
+          <span class="rank-total" data-v="${b.month_used || 0}">${n(b.month_used)}</span>
         </div>
-        <div class="rank-bar"><i style="width:${width}%"></i></div>
+        <div class="rank-bar"><i style="width:0%"></i></div>
         <div class="rank-meta">
           <span>${n(b.prompt_tokens)} in</span>
           <span>${n(b.completion_tokens)} out</span>
@@ -1866,6 +1965,11 @@ function renderBreakdown(el, data, nameLabel, lang) {
       </div>
     </div>`;
   }).join('') + '</div>';
+  requestAnimationFrame(() => {
+    el.querySelectorAll('.rank-row').forEach((row, i) => {
+      row.querySelector('.rank-bar i').style.width = widthOf(entries[i][1]) + '%';
+    });
+  });
 }
 
 function fetchAll() {

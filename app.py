@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_file
 
-VERSION = "0.6.35"
+VERSION = "0.6.36"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
