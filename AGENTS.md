@@ -10,15 +10,17 @@
 - 清理构建产物时只操作 `dist/` 和 `build/` 目录，不要扩大范围
 
 ### 🔴 代码/功能变更必须升级版本、构建、提交并部署
+**这是硬性要求：每一次代码/功能修改，改完就自动走完下面五步（推代码 + 构建 + 部署），不需要等用户提醒，也不允许只改代码不发布。**
+未全部完成前不得回复「已完成」；某一步失败（如 GitHub 连不上）必须重试并在结果里说明哪些步骤没做完。
 每次修改代码或功能升级，**完成后必须自动完成以下五步**（无需用户提醒）：
 1. **升级版本**：运行 `build.vbs`（或先手动 `python scripts/bump_version.py`）自动 bump patch 版本号
-2. **记录版本说明**：在 `CHANGELOG.md` 顶部 `[Unreleased]` 下新增本次版本的详细条目，包含：
+2. **记录版本说明**：在 `CHANGELOG.md` 顶部新增本次版本的详细条目，包含：
    - 变更分类（Added / Changed / Fixed / Removed）
    - 改了哪些文件、实现了什么功能、为什么改
    - 数据库结构变更时，附表结构说明、表关系、查询方式（参考 0.6.15 的写法）
 3. **完成构建**：确保 `dist/AI Gateway vX.Y.Z.exe` 产物已生成
-4. **自动提交并推送**：`git add` 本次变更文件后 `git commit`，提交信息按仓库风格写清变更内容；随后推到两个远端 `git push github master` 和 `git push origin master`（GitHub + Gitee 都要推，曾有只 commit 不 push 的遗漏）。**禁止提交**：`config.json`（含 API 密钥，未被 git 追踪，保持不追踪）、`*.db`/`*.db-wal`/`*.db-shm`、`deploy.ps1.bak` 等临时文件
-5. **自动部署**：运行 `deploy.ps1` 同步代码到服务器并重启服务（见下节「部署」），完成后验证服务器 HTTP 200
+4. **自动提交并推送**：`git add` 本次变更文件后 `git commit`，提交信息按仓库风格写清变更内容；随后推到两个远端 `git push github master` 和 `git push origin master`（GitHub + Gitee 都要推，曾有只 commit 不 push 的遗漏，也有 GitHub 网络抖动导致漏推的情况——推送后应确认远端 ref 已更新）。**禁止提交**：`config.json`（含 API 密钥，未被 git 追踪，保持不追踪）、`*.db`/`*.db-wal`/`*.db-shm`、`deploy.ps1.bak` 等临时文件
+5. **自动部署**：运行 `deploy.ps1` 同步代码到服务器并重启服务（见下节「部署」），完成后验证服务器 HTTP 200 与 `/api/health` 版本号
 
 版本号规则：patch 位自动 +1（如 0.6.14 → 0.6.15），`VERSION` 只在 `app.py` 维护。
 

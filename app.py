@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, request, jsonify, render_template, Response, stream_with_context, send_file
 
-VERSION = "0.6.36"
+VERSION = "0.6.37"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -1688,7 +1688,7 @@ def set_default_model(model_id):
 
 @app.route("/")
 def landing():
-    return render_template("index.html")
+    return render_template("index.html", version=VERSION)
 
 
 @app.route("/api/health")
@@ -1706,9 +1706,65 @@ def api_health():
 def favicon():
     return app.send_static_file("icon.ico")
 
+_CHANGELOG_CACHE = {"mtime": None, "entries": []}
+
+
+def _changelog_entries(limit=6):
+    """解析 CHANGELOG.md（按 `## [x.y.z] - date` 分块）供前端版本面板展示。"""
+    path = None
+    for base in (RESOURCE_DIR, EXE_DIR):
+        cand = os.path.join(base, "CHANGELOG.md")
+        if os.path.exists(cand):
+            path = cand
+            break
+    if not path:
+        return []
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return []
+    if _CHANGELOG_CACHE["mtime"] == mtime:
+        return _CHANGELOG_CACHE["entries"][:limit]
+
+    entries, cur, sec = [], None, None
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for raw in f:
+            line = raw.rstrip("\n")
+            if line.startswith("## "):
+                m = re.match(r"##\s*\[?(\d[\w.\-]*)\]?\s*(?:[-–]\s*(\d{4}-\d{2}-\d{2}))?", line)
+                cur, sec = None, None
+                if m:
+                    cur = {"version": m.group(1), "date": m.group(2) or "", "sections": []}
+                    entries.append(cur)
+            elif line.startswith("### ") and cur is not None:
+                sec = {"title": line[4:].strip(), "items": []}
+                cur["sections"].append(sec)
+            elif cur is not None and sec is not None:
+                text = line.strip()
+                if not text:
+                    continue
+                if text.startswith("- "):
+                    body = text[2:].strip()
+                    if (len(line) - len(line.lstrip())) >= 2 and sec["items"]:
+                        sec["items"][-1] += " " + body
+                    else:
+                        sec["items"].append(body)
+                elif sec["items"]:
+                    sec["items"][-1] += " " + text
+
+    _CHANGELOG_CACHE["mtime"] = mtime
+    _CHANGELOG_CACHE["entries"] = entries
+    return entries[:limit]
+
+
+@app.route("/api/version")
+def api_version():
+    return jsonify({"version": VERSION, "entries": _changelog_entries()})
+
+
 @app.route("/dashboard")
 def dashboard():
-    return render_template("index.html")
+    return render_template("index.html", version=VERSION)
 
 
 @app.route("/api/db/download")

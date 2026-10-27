@@ -105,7 +105,7 @@ body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--f
 .brand-sigil, .brand-sub { display: none; }
 .prov-dot { display: inline-block; width: 5px; height: 5px; margin-right: 6px; border-radius: 50%; background: var(--dot, var(--muted)); vertical-align: middle; }
 .container { max-width: 720px; margin: 0 auto; }
-.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; position: relative; z-index: 20; }
 h1 { font-size: 15px; color: var(--heading); font-weight: 600; }
 .toolbar { display: flex; gap: 6px; align-items: center; }
 .toolbar button { background: var(--btn-bg); border: 1px solid var(--btn-border); color: var(--btn-fg); padding: 4px 10px; border-radius: 5px; cursor: pointer; font-size: 11px; line-height: 1; }
@@ -145,6 +145,43 @@ td:last-child, th:last-child { text-align: right; }
 .dropdown-item:hover { background: var(--btn-bg); }
 .dropdown-item input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--btn-active-bg); }
 .config-dropdown > button { background: var(--btn-bg); border: 1px solid var(--btn-border); color: var(--btn-fg); padding: 4px 10px; border-radius: 5px; cursor: pointer; font-size: 11px; line-height: 1; }
+
+/* 版本 / CHANGELOG 浮框 */
+.ver-btn { font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.ver-panel {
+  width: 430px;
+  max-width: 88vw;
+  padding: 0;
+  min-width: 0;
+  max-height: min(72vh, 620px);
+}
+.ver-panel.show { display: flex; flex-direction: column; }
+.ver-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px 9px;
+  border-bottom: 1px solid var(--card-border);
+  font-size: 9.5px;
+  letter-spacing: .16em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.ver-head b { font-size: 15px; font-weight: 600; letter-spacing: 0; color: var(--heading); font-variant-numeric: tabular-nums; }
+.ver-list { overflow-y: auto; overscroll-behavior: contain; padding: 2px 0 6px; }
+.ver-item { padding: 10px 14px 12px; border-bottom: 1px solid var(--card-border); }
+.ver-item:last-child { border-bottom: 0; }
+.ver-meta { display: flex; align-items: baseline; gap: 8px; }
+.ver-v { font-size: 12px; font-weight: 600; color: var(--heading); font-variant-numeric: tabular-nums; }
+.ver-d { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ver-sec { margin-top: 6px; }
+.ver-t { font-size: 9px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+.ver-sec ul { margin: 0; padding-left: 15px; }
+.ver-sec li { font-size: 11.5px; line-height: 1.6; color: var(--dim); }
+.ver-sec li b { color: var(--heading); font-weight: 600; }
+.ver-sec li code { font-family: var(--font-label); font-size: 10.5px; padding: 0 3px; background: var(--btn-bg); border-radius: 2px; }
+.ver-empty { padding: 18px 14px; font-size: 11.5px; color: var(--muted); }
 /* 自托管字体（不依赖外部 CDN，离线 / 内网可用） */
 @font-face { font-family: "Bodoni Moda"; src: url("/static/fonts/bodoni-normal-400_800.woff2") format("woff2"); font-weight: 400 800; font-style: normal; font-display: swap; }
 @font-face { font-family: "Jost"; src: url("/static/fonts/jost-normal-300_600.woff2") format("woff2"); font-weight: 300 600; font-style: normal; font-display: swap; }
@@ -333,12 +370,16 @@ td:last-child, th:last-child { text-align: right; }
   background: var(--k-accent-wash);
 }
 [data-layout="kanban"] .dropdown-content {
+  z-index: 140;
   background: var(--k-surface-2);
   border-color: var(--k-border-strong);
   border-radius: 0;
   backdrop-filter: blur(20px);
   box-shadow: 0 30px 80px rgba(0, 0, 0, .5);
 }
+/* 报头要压在内容面板之上，否则 ⚙ / 版本浮框会被统计卡片和面板盖住
+   （header 与 .stat/.section 都带 k-rise 位移动画，各自形成层叠上下文） */
+[data-layout="kanban"] .header { z-index: 60; }
 [data-layout="kanban"] .dropdown-item {
   font-family: var(--font-label);
   font-size: 9px;
@@ -347,6 +388,32 @@ td:last-child, th:last-child { text-align: right; }
 }
 [data-layout="kanban"] .dropdown-item:hover { background: var(--k-accent-wash); color: var(--k-text); }
 [data-layout="kanban"] .dropdown-item input[type="checkbox"] { accent-color: var(--k-accent); }
+[data-layout="kanban"] .ver-panel {
+  width: 452px;
+  background: var(--k-surface-2);
+  border-color: var(--k-border-strong);
+  border-radius: 0;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .5);
+}
+[data-layout="kanban"] .ver-head {
+  border-bottom-color: var(--k-border);
+  font-family: var(--font-label);
+  font-size: 8.5px;
+  color: var(--k-dim);
+}
+[data-layout="kanban"] .ver-head b { font-family: var(--font-body); font-weight: 500; font-size: 16px; color: var(--k-accent-hi); }
+[data-layout="kanban"] .ver-item { border-bottom-color: var(--k-border); }
+[data-layout="kanban"] .ver-v { font-family: var(--font-body); font-weight: 500; font-size: 13px; color: var(--k-text); }
+[data-layout="kanban"] .ver-d { font-family: var(--font-label); font-size: 9px; color: var(--k-dim); }
+[data-layout="kanban"] .ver-t { font-family: var(--font-label); font-size: 8.5px; color: var(--k-accent); opacity: .9; }
+[data-layout="kanban"] .ver-sec li { font-family: var(--font-body); font-size: 12px; color: var(--k-muted); }
+[data-layout="kanban"] .ver-sec li b { color: var(--k-text); font-weight: 500; }
+[data-layout="kanban"] .ver-sec li code { font-family: var(--font-label); font-size: 10.5px; background: var(--k-surface); color: var(--k-text); }
+[data-layout="kanban"] .ver-empty { font-family: var(--font-label); font-size: 10px; color: var(--k-dim); }
+[data-layout="kanban"] .ver-list { scrollbar-width: thin; scrollbar-color: var(--k-border-strong) transparent; }
+[data-layout="kanban"] .ver-list::-webkit-scrollbar { width: 6px; }
+[data-layout="kanban"] .ver-list::-webkit-scrollbar-track { background: transparent; }
+[data-layout="kanban"] .ver-list::-webkit-scrollbar-thumb { background: var(--k-border-strong); }
 
 /* ── 区间条 ───────────────────────────────────────────────── */
 [data-layout="kanban"] .controls {
@@ -1110,6 +1177,13 @@ td:last-child, th:last-child { text-align: right; }
       <button id="langBtn" onclick="toggleLang()">EN</button>
       <button onclick="downloadDb()" data-i18n="dbExport">导出</button>
       <button onclick="document.getElementById('dbFileInput').click()" data-i18n="dbImport">导入</button>
+      <div class="config-dropdown">
+        <button id="verBtn" class="ver-btn" onclick="toggleVersionPanel()" title="版本与更新记录">v{{ version }}</button>
+        <div id="verPanel" class="dropdown-content ver-panel">
+          <div class="ver-head"><span>AI Gateway · CHANGELOG</span><b>v{{ version }}</b></div>
+          <div class="ver-list" id="verList"><div class="ver-empty">加载中…</div></div>
+        </div>
+      </div>
       <input type="file" id="dbFileInput" accept=".db" style="display:none" onchange="uploadDb(this)">
     </div>
   </div>
@@ -1361,7 +1435,45 @@ function initPrefs() {
 
 function toggleConfigMenu() {
   const menu = document.getElementById('configMenu');
+  document.getElementById('verPanel')?.classList.remove('show');
   menu.classList.toggle('show');
+}
+
+let versionLoaded = false;
+
+function mdInline(s) {
+  return escapeHtml(s)
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+function renderChangelog(entries) {
+  if (!entries || !entries.length) return '<div class="ver-empty">暂无更新记录</div>';
+  return entries.map(e => `
+    <div class="ver-item">
+      <div class="ver-meta"><span class="ver-v">v${escapeHtml(e.version)}</span><span class="ver-d">${escapeHtml(e.date || '')}</span></div>
+      ${(e.sections || []).map(s => `<div class="ver-sec">
+        <div class="ver-t">${escapeHtml(s.title)}</div>
+        <ul>${(s.items || []).map(t => `<li>${mdInline(t)}</li>`).join('')}</ul>
+      </div>`).join('')}
+    </div>`).join('');
+}
+
+function toggleVersionPanel() {
+  const panel = document.getElementById('verPanel');
+  document.getElementById('configMenu')?.classList.remove('show');
+  const open = panel.classList.toggle('show');
+  if (!open || versionLoaded) return;
+  const list = document.getElementById('verList');
+  fetch('/api/version')
+    .then(r => r.json())
+    .then(d => {
+      versionLoaded = true;
+      list.innerHTML = renderChangelog(d.entries);
+      const btn = document.getElementById('verBtn');
+      if (btn && d.version) btn.textContent = 'v' + d.version;
+    })
+    .catch(() => { list.innerHTML = '<div class="ver-empty">更新记录加载失败</div>'; });
 }
 
 function toggleSection(section) {
@@ -1415,9 +1527,15 @@ function applySectionVisibility(sections) {
 }
 
 document.addEventListener('click', (e) => {
-  const dropdown = document.querySelector('.config-dropdown');
-  if (!dropdown.contains(e.target)) {
-    document.getElementById('configMenu').classList.remove('show');
+  document.querySelectorAll('.config-dropdown').forEach(dd => {
+    if (dd.contains(e.target)) return;
+    dd.querySelector('.dropdown-content')?.classList.remove('show');
+  });
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.config-dropdown .dropdown-content.show')
+      .forEach(el => el.classList.remove('show'));
   }
 });
 

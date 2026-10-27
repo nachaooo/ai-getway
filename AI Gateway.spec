@@ -14,6 +14,7 @@ a = Analysis(
         ('templates', 'templates'),
         ('static', 'static'),
         ('tokenizers/deepseek', 'tokenizers/deepseek'),
+        ('CHANGELOG.md', '.'),
     ] + collect_data_files('tiktoken'),
     hiddenimports=['app', 'tiktoken_ext.openai_public'],
     hookspath=[],
